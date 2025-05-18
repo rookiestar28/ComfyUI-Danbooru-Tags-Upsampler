@@ -1,0 +1,23 @@
+# ComfyUI-Danbooru-Tags-Upsampler/requirements.txt
+
+# Core Hugging Face libraries
+# Consider specifying a minimum version if certain features are needed,
+# e.g., transformers>=4.30.0
+# For broader compatibility initially, can leave versions open or use ranges.
+# Given the copied UnbatchedClassifierFreeGuidanceLogitsProcessor, a relatively recent transformers version is good.
+transformers>=4.35.0
+optimum[onnxruntime]>=1.16.0
+
+# Tokenizers is often a dependency of transformers
+tokenizers>=0.14.0
+
+# Sentencepiece might be needed by some tokenizers used by transformers
+sentencepiece
+
+# PyTorch (torch) is a fundamental requirement for ComfyUI and transformers.
+# Usually, users will have this installed as part of their ComfyUI setup.
+# Listing it here can ensure it's considered if pip needs to resolve versions,
+# but typically we don't force a specific torch version that might conflict with ComfyUI's base.
+# torch
+# torchvision
+# torchaudio
