@@ -1,4 +1,4 @@
-# ComfyUI Danbooru Tags Upsampler (by rookiestar28)
+# ComfyUI Danbooru Tags Upsampler
 
 This is a custom node for ComfyUI that upsamples prompts by generating or completing Danbooru tags using a lightweight LLM. It's designed for users who want to quickly create diverse, natural, and detailed prompts for anime-style image generation without extensive manual input.
 
