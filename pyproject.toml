@@ -1,5 +1,5 @@
 [project]
-name = "danbooru-tags-upsampler"
+name = "comfyui_danbooru_tags_upsampler"
 description = "Makes the prompts for generating anime images more detailed by upsampling Danbooru tags."
 version = "1.0.0"
 license = {file = "LICENSE"} 
@@ -20,7 +20,12 @@ license = {file = "LICENSE"}
 #     "Environment :: GPU :: Apple Metal",    # Apple Metal support
 # ]
 
-dependencies = ["# ComfyUI-Danbooru-Tags-Upsampler/requirements.txt", "# Core Hugging Face libraries", "# Consider specifying a minimum version if certain features are needed,", "# e.g., transformers>=4.30.0", "# For broader compatibility initially, can leave versions open or use ranges.", "# Given the copied UnbatchedClassifierFreeGuidanceLogitsProcessor, a relatively recent transformers version is good.", "transformers>=4.35.0", "optimum[onnxruntime]>=1.16.0", "# Tokenizers is often a dependency of transformers", "tokenizers>=0.14.0", "# Sentencepiece might be needed by some tokenizers used by transformers", "sentencepiece", "# PyTorch (torch) is a fundamental requirement for ComfyUI and transformers.", "# Usually, users will have this installed as part of their ComfyUI setup.", "# Listing it here can ensure it's considered if pip needs to resolve versions,", "# but typically we don't force a specific torch version that might conflict with ComfyUI's base.", "# torch", "# torchvision", "# torchaudio"]
+dependencies = [
+    "transformers>=4.35.0",
+    "optimum[onnxruntime]>=1.16.0",
+    "tokenizers>=0.14.0",
+    "sentencepiece"
+]
 
 [project.urls]
 Repository = "https://github.com/rookiestar28/ComfyUI-Danbooru-Tags-Upsampler"
@@ -29,8 +34,8 @@ Documentation = "https://github.com/rookiestar28/ComfyUI-Danbooru-Tags-Upsampler
 "Bug Tracker" = "https://github.com/rookiestar28/ComfyUI-Danbooru-Tags-Upsampler/issues"
 
 [tool.comfy]
-PublisherId = ""
-DisplayName = "ComfyUI-Danbooru-Tags-Upsampler"
+PublisherId = "rookiestar"
+DisplayName = "ComfyUI Danbooru Tags Upsampler"
 Icon = ""
 includes = [] 
 # "requires-comfyui" = ">=1.0.0"  # ComfyUI version compatibility
