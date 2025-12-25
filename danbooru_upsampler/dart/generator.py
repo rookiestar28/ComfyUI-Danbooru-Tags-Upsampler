@@ -33,19 +33,25 @@ logger = logging.getLogger(__name__)
 class DartGenerator:
     """A class for generating danbooru tags"""
 
-    # Class-level variables to cache model and tokenizer
-    # This helps to load them only once per ComfyUI session if multiple nodes use this class
+    # Class-level cache for models and tokenizers (支援多模型切換)
+    # Key: (model_name, backend) -> model
+    _model_cache: dict[tuple[str, str], PreTrainedModel | ORTModelForCausalLM] = {}
+    # Key: model_name -> tokenizer
+    _tokenizer_cache: dict[str, PreTrainedTokenizer | PreTrainedTokenizerFast] = {}
+    # 當前使用的模型和分詞器
     dart_model: PreTrainedModel | ORTModelForCausalLM | None = None
     dart_tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast | None = None
+    _current_model_key: tuple[str, str] | None = None
+    _current_tokenizer_key: str | None = None
 
     def __init__(
         self,
         model_name: str,
         tokenizer_name: str,
-        model_backend: str, # e.g., "original", "onnx", "onnx_quantized"
-        model_device: str = "cpu", # e.g., "cpu", "cuda"
-        debug_logging: bool = False, # MODIFIED: Added debug_logging as a parameter
-        # MODIFIED: Removed self.options = parse_options(opts)
+        model_backend: str,
+        model_device: str = "cpu",
+        debug_logging: bool = False,
+        onnx_file_name: str | None = None,  # 新增：ONNX 檔案名稱
     ):
         self.model_name = model_name
         self.tokenizer_name = tokenizer_name
@@ -64,6 +70,7 @@ class DartGenerator:
 
         self.model_backend = model_backend
         self.model_device = model_device
+        self.onnx_file_name = onnx_file_name  # 儲存 ONNX 檔案名稱
 
         if debug_logging:
             logger.setLevel(logging.DEBUG)
@@ -74,41 +81,46 @@ class DartGenerator:
 
     def _load_dart_model(self):
         logger.debug(f"Loading DART model: {self.model_name} with backend: {self.model_backend}")
-        # MODIFIED: Check against actual string values if MODEL_BACKEND_TYPE becomes an issue without webui opts
-        if self.model_backend == MODEL_BACKEND_TYPE.get("ORIGINAL", "original"): # Use .get for safety
-            # Ensure the class variable is updated
+        is_onnx = False
+        
+        if self.model_backend == MODEL_BACKEND_TYPE.get("ORIGINAL", "original"):
             DartGenerator.dart_model = AutoModelForCausalLM.from_pretrained(self.model_name)
-        elif self.model_backend == MODEL_BACKEND_TYPE.get("ONNX", "onnx"):
+        elif self.model_backend in [MODEL_BACKEND_TYPE.get("ONNX", "ONNX"), MODEL_BACKEND_TYPE.get("ONNX_QUANTIZED", "ONNX (Quantized)")]:
+            # 使用傳入的 onnx_file_name 或預設值
+            file_name = self.onnx_file_name
+            if not file_name:
+                file_name = "model_quantized.onnx" if "Quantized" in self.model_backend else "model.onnx"
+            
             DartGenerator.dart_model = ORTModelForCausalLM.from_pretrained(
                 self.model_name,
-                file_name="model.onnx", # Default ONNX model file name
+                file_name=file_name,
             )
-        elif self.model_backend == MODEL_BACKEND_TYPE.get("ONNX_QUANTIZED", "onnx_quantized"):
-            DartGenerator.dart_model = ORTModelForCausalLM.from_pretrained(
-                self.model_name,
-                file_name="model_quantized.onnx", # Default quantized ONNX model file name
-            )
+            is_onnx = True
         else:
             logger.error(f"Unknown or unsupported model backend: {self.model_backend}")
             raise ValueError(f"Unknown or unsupported model backend: {self.model_backend}")
 
-
         assert DartGenerator.dart_model is not None, "Failed to load DART model"
         
+        # 修復 optimum/transformers 版本不相容問題
+        # ORTModelForCausalLM 類別缺少 _is_stateful 屬性，需手動添加
+        if is_onnx and not hasattr(ORTModelForCausalLM, '_is_stateful'):
+            ORTModelForCausalLM._is_stateful = False
+            logger.debug("Patched ORTModelForCausalLM with _is_stateful attribute for compatibility.")
+        
         try:
-            DartGenerator.dart_model.to(self.model_device) # type: ignore
+            DartGenerator.dart_model.to(self.model_device)
             logger.info(f"DART model '{self.model_name}' loaded to {self.model_device} using backend {self.model_backend}")
         except Exception as e:
             logger.error(f"Failed to move DART model to device '{self.model_device}': {e}")
-            # Fallback to CPU or raise error
             if self.model_device != "cpu":
                 logger.info("Attempting to load DART model to CPU as a fallback.")
                 try:
-                    DartGenerator.dart_model.to("cpu") # type: ignore
+                    DartGenerator.dart_model.to("cpu")
                     logger.info(f"DART model '{self.model_name}' loaded to CPU (fallback) using backend {self.model_backend}")
                 except Exception as fallback_e:
                     logger.error(f"Failed to load DART model to CPU (fallback): {fallback_e}")
-                    raise fallback_e # Or handle more gracefully
+                    raise fallback_e
             else:
                 raise e
 
@@ -122,19 +134,47 @@ class DartGenerator:
         assert DartGenerator.dart_tokenizer is not None, "Failed to load DART tokenizer"
         logger.info(f"DART tokenizer '{self.tokenizer_name}' loaded.")
 
-    def _check_model_available(self): # Renamed for consistency
-        return DartGenerator.dart_model is not None
+    def _check_model_available(self) -> bool:
+        """檢查當前請求的模型是否已載入"""
+        cache_key = (self.model_name, self.model_backend)
+        return cache_key == DartGenerator._current_model_key and DartGenerator.dart_model is not None
 
-    def _check_tokenizer_available(self): # Renamed for consistency
-        return DartGenerator.dart_tokenizer is not None
+    def _check_tokenizer_available(self) -> bool:
+        """檢查當前請求的分詞器是否已載入"""
+        return self.tokenizer_name == DartGenerator._current_tokenizer_key and DartGenerator.dart_tokenizer is not None
 
     def load_model_if_needed(self):
-        if not self._check_model_available():
-            self._load_dart_model()
+        """載入模型，支援模型切換"""
+        cache_key = (self.model_name, self.model_backend)
+        
+        # 檢查是否需要切換模型
+        if cache_key != DartGenerator._current_model_key:
+            # 嘗試從快取載入
+            if cache_key in DartGenerator._model_cache:
+                DartGenerator.dart_model = DartGenerator._model_cache[cache_key]
+                DartGenerator._current_model_key = cache_key
+                logger.info(f"Switched to cached model: {self.model_name} ({self.model_backend})")
+            else:
+                # 載入新模型
+                self._load_dart_model()
+                # 加入快取
+                DartGenerator._model_cache[cache_key] = DartGenerator.dart_model  # type: ignore
+                DartGenerator._current_model_key = cache_key
 
     def load_tokenizer_if_needed(self):
-        if not self._check_tokenizer_available():
-            self._load_dart_tokenizer()
+        """載入分詞器，支援切換"""
+        if self.tokenizer_name != DartGenerator._current_tokenizer_key:
+            # 嘗試從快取載入
+            if self.tokenizer_name in DartGenerator._tokenizer_cache:
+                DartGenerator.dart_tokenizer = DartGenerator._tokenizer_cache[self.tokenizer_name]
+                DartGenerator._current_tokenizer_key = self.tokenizer_name
+                logger.info(f"Switched to cached tokenizer: {self.tokenizer_name}")
+            else:
+                # 載入新分詞器
+                self._load_dart_tokenizer()
+                # 加入快取
+                DartGenerator._tokenizer_cache[self.tokenizer_name] = DartGenerator.dart_tokenizer  # type: ignore
+                DartGenerator._current_tokenizer_key = self.tokenizer_name
 
     def get_vocab_list(self) -> list[str]:
         self.load_tokenizer_if_needed()
@@ -255,52 +295,70 @@ class DartGenerator:
 
 
         # Prepare logits processor if CFG is enabled and negative prompt exists
+        # 注意：ONNX 模型不支援 CFG logits processor (ORTModelForCausalLM 缺少 _is_stateful 屬性)
         logits_processor = None
-        if negative_prompt_ids_tensor is not None and cfg_scale > 1.0: # Only use CFG if scale > 1
-            logits_processor = LogitsProcessorList(
-                [
-                    UnbatchedClassifierFreeGuidanceLogitsProcessor(
-                        guidance_scale=cfg_scale,
-                        model_input_name="input_ids", # Default for most HF models
-                        # unconditional_ids=negative_prompt_ids_tensor, # Pass the tensor directly
-                        # The processor needs to handle tokenization of unconditional prompt internally
-                        # Or we ensure the processor is compatible with pre-tokenized IDs.
-                        # The original UnbatchedClassifierFreeGuidanceLogitsProcessor might need `model` and `unconditional_ids`
-                        # Let's assume it takes the model and tokenized unconditional_ids
-                        model=DartGenerator.dart_model,
-                        unconditional_ids=negative_prompt_ids_tensor,
-                        # unconditional_attention_mask=negative_prompt_attention_mask, # If needed
-                    )
-                ]
-            )
+        is_onnx_backend = self.model_backend in [
+            MODEL_BACKEND_TYPE.get("ONNX", "ONNX"),
+            MODEL_BACKEND_TYPE.get("ONNX_QUANTIZED", "ONNX (Quantized)")
+        ]
+        
+        if negative_prompt_ids_tensor is not None and cfg_scale > 1.0:
+            if is_onnx_backend:
+                logger.warning("CFG (Classifier-Free Guidance) is not supported with ONNX backend. Skipping CFG.")
+            else:
+                logits_processor = LogitsProcessorList(
+                    [
+                        UnbatchedClassifierFreeGuidanceLogitsProcessor(
+                            guidance_scale=cfg_scale,
+                            model=DartGenerator.dart_model,
+                            unconditional_ids=negative_prompt_ids_tensor,
+                        )
+                    ]
+                )
         
         # Ensure max_new_tokens is reasonable
         max_length = input_ids.shape[1] + max_new_tokens
 
         try:
-            output_ids = DartGenerator.dart_model.generate(
-                input_ids,
-                # attention_mask=attention_mask, # If model uses attention mask explicitly
-                max_length=max_length, # Use max_length instead of max_new_tokens for some models/versions
-                min_new_tokens=min_new_tokens, # Some models might prefer min_length
-                do_sample=do_sample,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                num_beams=num_beams,
-                bad_words_ids=bad_words_ids,
-                no_repeat_ngram_size=1, # As in original
-                logits_processor=logits_processor,
-                # pad_token_id=DartGenerator.dart_tokenizer.eos_token_id # Often useful, especially with batching or beams
-            )
+            # ONNX 模型可能不支援所有生成參數，使用簡化版本
+            if is_onnx_backend:
+                # ONNX 模型使用簡化參數
+                output_ids = DartGenerator.dart_model.generate(
+                    input_ids,
+                    max_length=max_length,
+                    do_sample=do_sample,
+                    temperature=temperature if do_sample else 1.0,
+                    top_p=top_p if do_sample else 1.0,
+                    top_k=top_k if do_sample else 0,
+                    num_beams=num_beams,
+                    pad_token_id=DartGenerator.dart_tokenizer.eos_token_id,
+                )
+            else:
+                output_ids = DartGenerator.dart_model.generate(
+                    input_ids,
+                    max_length=max_length,
+                    min_new_tokens=min_new_tokens,
+                    do_sample=do_sample,
+                    temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
+                    num_beams=num_beams,
+                    bad_words_ids=bad_words_ids,
+                    no_repeat_ngram_size=1,
+                    logits_processor=logits_processor,
+                )
         except Exception as e:
             logger.error(f"Error during model.generate: {e}")
-            # Consider adding more detailed error logging, e.g., input shapes, parameters
             logger.error(f"Input IDs shape: {input_ids.shape if input_ids is not None else 'None'}")
             logger.error(f"Parameters: max_length={max_length}, do_sample={do_sample}, temperature={temperature}, top_p={top_p}, top_k={top_k}, num_beams={num_beams}")
-
             return f"Error generating tags: {e}"
 
+        # 檢查輸出是否有效
+        if output_ids is None:
+            logger.error("model.generate returned None")
+            return "Error generating tags: model returned None"
+        
+        logger.debug(f"Generate output type: {type(output_ids)}, shape: {output_ids.shape if hasattr(output_ids, 'shape') else 'N/A'}")
 
         # Decode only the newly generated tokens
         # output_ids[0] contains the full sequence (input_ids + generated_ids)

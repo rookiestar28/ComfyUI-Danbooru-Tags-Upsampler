@@ -1,13 +1,9 @@
 # ComfyUI-Danbooru-Tags-Upsampler/requirements.txt
 
 # Core Hugging Face libraries
-# Consider specifying a minimum version if certain features are needed,
-# e.g., transformers>=4.30.0
-# For broader compatibility initially, can leave versions open or use ranges.
-# Given the copied UnbatchedClassifierFreeGuidanceLogitsProcessor, a relatively recent transformers version is good.
 transformers>=4.35.0
 optimum[onnxruntime]>=1.16.0
-
+optimum-onnx
 # Tokenizers is often a dependency of transformers
 tokenizers>=0.14.0
 

@@ -8,7 +8,7 @@ from .dart.generator import DartGenerator
 from .dart.analyzer import DartAnalyzer, ImagePromptAnalyzingResult
 
 # Import constants that might be used for INPUT_TYPES
-from .dart.settings import MODEL_BACKEND_TYPE # For choices in model_backend
+from .dart.settings import MODEL_BACKEND_TYPE, DART_MODELS, DEFAULT_MODEL
 from .dart.utils import SEED_MAX # For seed input max value
 
 # Setup logger for this node
@@ -39,19 +39,21 @@ class DanbooruTagsUpsamplerNode:
 
     @classmethod
     def INPUT_TYPES(cls):
-        # Ensure MODEL_BACKEND_TYPE values are used for choices
+        # 取得可用模型列表
+        model_choices = list(DART_MODELS.keys())
+        
+        # Backend 選項
         backend_choices = list(MODEL_BACKEND_TYPE.values())
-        # Ensure the default from settings.py (if used) is a valid choice, or pick first
         default_backend = MODEL_BACKEND_TYPE.get("ONNX_QUANTIZED", backend_choices[0] if backend_choices else "Original")
-
 
         return {
             "required": {
                 "prompt": ("STRING", {"multiline": True, "default": "1girl, solo"}),
+                "model_name": (model_choices, {"default": DEFAULT_MODEL}),
                 "tag_length": (TAG_LENGTH_OPTIONS, {"default": "long"}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": SEED_MAX}),
                 "temperature": ("FLOAT", {"default": 1.0, "min": 0.01, "max": 5.0, "step": 0.01}),
-                "top_k": ("INT", {"default": 30, "min": 0, "max": 1000, "step": 1}), # Original default was 20
+                "top_k": ("INT", {"default": 30, "min": 0, "max": 1000, "step": 1}),
                 "top_p": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "num_beams": ("INT", {"default": 1, "min": 1, "max": 20, "step": 1}),
                 "model_device": (["cpu", "cuda"], {"default": "cuda" if torch.cuda.is_available() else "cpu"}),
@@ -59,20 +61,17 @@ class DanbooruTagsUpsamplerNode:
                 "max_new_tokens": ("INT", {"default": 128, "min": 8, "max": 512, "step": 8}),
             },
             "optional": {
-                "negative_prompt_tags": ("STRING", {"multiline": True, "default": ""}), # For CFG related tags
+                "negative_prompt_tags": ("STRING", {"multiline": True, "default": ""}),
                 "ban_tags": ("STRING", {"multiline": False, "default": ""}),
                 "cfg_scale": ("FLOAT", {"default": 1.5, "min": 1.0, "max": 10.0, "step": 0.1}),
                 "debug_logging": ("BOOLEAN", {"default": False}),
-                # escape_input_brackets_enabled / escape_output_brackets_enabled are more internal to how analyzer
-                # and utils work, might be advanced options or fixed based on testing.
-                # For now, let's assume fixed True or make them advanced optional inputs if needed.
             }
         }
 
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("upsampled_prompt",)
     FUNCTION = "upsample"
-    CATEGORY = "Prompt Styling/Ray" # Or your preferred category
+    CATEGORY = "Prompt Styling/casual_gamer28"
 
     def __init__(self):
         # __init__ is called when the workflow is loaded.
@@ -83,33 +82,63 @@ class DanbooruTagsUpsamplerNode:
             logger.warning(f"Tags directory not found at: {DanbooruTagsUpsamplerNode.TAGS_DIR}. Analyzer might not load category tags.")
 
 
-    def upsample(self, prompt: str, tag_length: str, seed: int,
+    def upsample(self, prompt: str, model_name: str, tag_length: str, seed: int,
                  temperature: float, top_k: int, top_p: float, num_beams: int,
                  model_device: str, model_backend: str, max_new_tokens: int,
                  negative_prompt_tags: str = "", ban_tags: str = "", cfg_scale: float = 1.5,
                  debug_logging: bool = False):
 
-        logger.info(f"Upsampling started. Seed: {seed}, Device: {model_device}, Backend: {model_backend}")
+        logger.info(f"Upsampling started. Model: {model_name}, Seed: {seed}, Device: {model_device}, Backend: {model_backend}")
         if debug_logging:
             logger.setLevel(logging.DEBUG)
         else:
-            logger.setLevel(logging.INFO) # Reset to INFO if not debug, for subsequent runs
+            logger.setLevel(logging.INFO)
 
-        # --- 1. Initialize DartGenerator ---
-        # Model name and tokenizer name are fixed for p1atdev/dart-v1-sft
-        model_name = "p1atdev/dart-v1-sft"
-        tokenizer_name = "p1atdev/dart-v1-sft"
+        # --- 1. 取得模型資訊 ---
+        model_info = DART_MODELS.get(model_name)
+        if not model_info:
+            logger.error(f"Unknown model: {model_name}")
+            return (prompt + f" [Error: Unknown model: {model_name}]",)
+        
+        model_repo = model_info["repo"]
+        supports_onnx = model_info.get("supports_onnx", False)
+        onnx_files = model_info.get("onnx_files", [])
+        
+        # 決定實際使用的後端和 ONNX 檔案
+        actual_backend = model_backend
+        onnx_file_name = None
+        
+        if model_backend == MODEL_BACKEND_TYPE.get("ONNX", "ONNX"):
+            if "model.onnx" in onnx_files:
+                onnx_file_name = "model.onnx"
+            elif "model_quantized.onnx" in onnx_files:
+                # 降級為 quantized 版本
+                logger.warning(f"Model {model_name} only has quantized ONNX, using ONNX (Quantized) instead.")
+                actual_backend = MODEL_BACKEND_TYPE.get("ONNX_QUANTIZED", "ONNX (Quantized)")
+                onnx_file_name = "model_quantized.onnx"
+            else:
+                # 無 ONNX 檔案，降級為 Original
+                logger.warning(f"Model {model_name} does not have ONNX files, falling back to Original backend.")
+                actual_backend = MODEL_BACKEND_TYPE.get("ORIGINAL", "Original")
+                
+        elif model_backend == MODEL_BACKEND_TYPE.get("ONNX_QUANTIZED", "ONNX (Quantized)"):
+            if "model_quantized.onnx" in onnx_files:
+                onnx_file_name = "model_quantized.onnx"
+            else:
+                # 無 quantized ONNX，降級為 Original
+                logger.warning(f"Model {model_name} does not have quantized ONNX, falling back to Original backend.")
+                actual_backend = MODEL_BACKEND_TYPE.get("ORIGINAL", "Original")
         
         try:
             generator = DartGenerator(
-                model_name=model_name,
-                tokenizer_name=tokenizer_name,
-                model_backend=model_backend,
+                model_name=model_repo,
+                tokenizer_name=model_repo,
+                model_backend=actual_backend,
                 model_device=model_device,
-                debug_logging=debug_logging
+                debug_logging=debug_logging,
+                onnx_file_name=onnx_file_name,  # 新增參數
             )
-            # --- 2. Ensure model and tokenizer are loaded ---
-            generator.load_model_if_needed() # This will use DartGenerator's class-level cache
+            generator.load_model_if_needed()
             generator.load_tokenizer_if_needed()
         except Exception as e:
             logger.error(f"Error initializing DartGenerator or loading model/tokenizer: {e}")

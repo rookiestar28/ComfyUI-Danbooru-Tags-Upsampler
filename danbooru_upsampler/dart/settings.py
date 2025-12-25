@@ -10,6 +10,34 @@ MODEL_BACKEND_TYPE: dict[str, str] = {
     "ONNX_QUANTIZED": "ONNX (Quantized)",
 }
 
+# 可用的 DART 模型列表 (依版本排序)
+# 所有模型皆使用相同推論代碼 (AutoModelForCausalLM)
+# onnx_files: 可用的 ONNX 檔案類型 ("model.onnx", "model_quantized.onnx")
+DART_MODELS: dict[str, dict] = {
+    "dart-v1-sft": {
+        "repo": "p1atdev/dart-v1-sft",
+        "description": "V1 SFT - 穩定版本 (推薦)",
+        "supports_onnx": True,
+        "onnx_files": ["model.onnx", "model_quantized.onnx"],
+    },
+    "dart-v2-sft": {
+        "repo": "p1atdev/dart-v2-sft",
+        "description": "V2 SFT - 改進版本",
+        "supports_onnx": True,
+        "onnx_files": ["model_quantized.onnx"],  # 只有 quantized 版本
+    },
+    "dart-v2-moe-sft": {
+        "repo": "p1atdev/dart-v2-moe-sft",
+        "description": "V2 MoE SFT - 專家混合架構",
+        "supports_onnx": False,
+        "onnx_files": [],
+    },
+    # dart-v3 已移除 (gated model，需要 HF 授權)
+}
+
+DEFAULT_MODEL = "dart-v1-sft"
+
+
 # OPTION_NAME and DEFAULT_VALUES might be useful if you want to centralize
 # default configurations that your ComfyUI node might use or expose.
 # However, many of these will be directly set as defaults in the ComfyUI node's INPUT_TYPES.
