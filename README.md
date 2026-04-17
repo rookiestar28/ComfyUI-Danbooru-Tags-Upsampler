@@ -28,6 +28,7 @@ This project is a port and adaptation of the [sd-danbooru-tags-upsampler](https:
 - **Multiple Model Backends**: Supports original Hugging Face Transformers, ONNX, and Quantized ONNX backends for the DART model, allowing for a balance between speed and resource usage.
 - **Device Selection**: Run the upsampling model on either CPU or CUDA-enabled GPU.
 - **Smart Model Caching**: Models are cached in memory for fast switching between different versions.
+- **Host Integration Ready**: Exposes a structured Python service seam for external callers that need clean results, canonical node detection, and toolbar-friendly defaults.
 
 ## Installation
 
@@ -82,7 +83,6 @@ This project is a port and adaptation of the [sd-danbooru-tags-upsampler](https:
         - `dart-v1-sft` - Stable version (Recommended, supports ONNX)
         - `dart-v2-sft` - Improved version (supports ONNX)
         - `dart-v2-moe-sft` - MoE architecture (Original backend only)
-        - `dart-v3-sft-preview-E` - Latest preview (Original backend only)
     - **`tag_length`**: Desired total length of the final prompt after upsampling.
         - `very short`: < 10 tags
         - `short`: < 20 tags
@@ -131,10 +131,27 @@ This node supports multiple DART models from Hugging Face:
 
 Models will be downloaded automatically on first use to your Hugging Face cache directory (`~/.cache/huggingface/hub/`).
 
+## Host Integration
+
+This repository now exposes a structured service layer for external callers that want to reuse the upsampler without depending on the full ComfyUI node wrapper.
+
+- Programmatic entry point: `danbooru_upsampler.service.upsample_prompt`
+- Toolbar helper: `danbooru_upsampler.service.build_toolbar_request`
+- Canonical node registry key: `DanbooruTagsUpsampler`
+- Legacy compatibility key remains available: `DanbooruTagsUpsamplerNodeRay`
+
+The service path is intended for host integrations such as editor-toolbar actions:
+
+- success returns a structured result object with `final_prompt`, `generated_suffix`, and resolved runtime metadata,
+- invalid model/runtime/analyzer/generation failures raise typed exceptions,
+- runtime cache access is guarded for background-thread delegation,
+- the default toolbar profile pins a conservative ONNX-quantized configuration rather than exposing the full node parameter surface immediately.
+
 ## For Developers / Troubleshooting
 
 - **Tags Directory**: The analyzer component loads classification tags from the `tags/` directory within this custom node's folder. Ensure this directory and its contents (`copyright.txt`, `character.txt`, `quality.txt`) are present.
 - **Escaping Brackets**: The handling of parentheses `()` and square brackets `[]` in prompts can be tricky. This node includes logic (from the original extension) to escape/unescape these, but their interaction with ComfyUI's CLIPTextEncode behavior should be observed. If you encounter issues with prompts containing brackets, this might be an area to investigate.
+- **Error Behavior**: External hosts should prefer the structured service API instead of parsing node output strings. The node wrapper now fails explicitly when the service reports runtime errors.
 
 ## Acknowledgements
 

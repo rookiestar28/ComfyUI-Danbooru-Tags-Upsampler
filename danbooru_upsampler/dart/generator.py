@@ -1,6 +1,8 @@
 import logging
 import time
 import re
+import threading
+from contextlib import contextmanager
 
 import torch
 from transformers import (
@@ -43,6 +45,8 @@ class DartGenerator:
     dart_tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast | None = None
     _current_model_key: tuple[str, str] | None = None
     _current_tokenizer_key: str | None = None
+    # CRITICAL: guard the shared class-level model/tokenizer cache; host integrations may call this runtime from worker threads.
+    _runtime_lock = threading.RLock()
 
     def __init__(
         self,
@@ -78,6 +82,11 @@ class DartGenerator:
             logger.setLevel(logging.INFO)
         
         logger.debug(f"DartGenerator initialized with: model_name='{model_name}', tokenizer_name='{tokenizer_name}', model_backend='{model_backend}', model_device='{model_device}', debug_logging={debug_logging}")
+
+    @contextmanager
+    def runtime_guard(self):
+        with DartGenerator._runtime_lock:
+            yield
 
     def _load_dart_model(self):
         logger.debug(f"Loading DART model: {self.model_name} with backend: {self.model_backend}")
@@ -146,47 +155,41 @@ class DartGenerator:
     def load_model_if_needed(self):
         """載入模型，支援模型切換"""
         cache_key = (self.model_name, self.model_backend)
-        
-        # 檢查是否需要切換模型
-        if cache_key != DartGenerator._current_model_key:
-            # 嘗試從快取載入
-            if cache_key in DartGenerator._model_cache:
-                DartGenerator.dart_model = DartGenerator._model_cache[cache_key]
-                DartGenerator._current_model_key = cache_key
-                logger.info(f"Switched to cached model: {self.model_name} ({self.model_backend})")
-            else:
-                # 載入新模型
-                self._load_dart_model()
-                # 加入快取
-                DartGenerator._model_cache[cache_key] = DartGenerator.dart_model  # type: ignore
-                DartGenerator._current_model_key = cache_key
+        with self.runtime_guard():
+            if cache_key != DartGenerator._current_model_key:
+                if cache_key in DartGenerator._model_cache:
+                    DartGenerator.dart_model = DartGenerator._model_cache[cache_key]
+                    DartGenerator._current_model_key = cache_key
+                    logger.info(f"Switched to cached model: {self.model_name} ({self.model_backend})")
+                else:
+                    self._load_dart_model()
+                    DartGenerator._model_cache[cache_key] = DartGenerator.dart_model  # type: ignore
+                    DartGenerator._current_model_key = cache_key
 
     def load_tokenizer_if_needed(self):
         """載入分詞器，支援切換"""
-        if self.tokenizer_name != DartGenerator._current_tokenizer_key:
-            # 嘗試從快取載入
-            if self.tokenizer_name in DartGenerator._tokenizer_cache:
-                DartGenerator.dart_tokenizer = DartGenerator._tokenizer_cache[self.tokenizer_name]
-                DartGenerator._current_tokenizer_key = self.tokenizer_name
-                logger.info(f"Switched to cached tokenizer: {self.tokenizer_name}")
-            else:
-                # 載入新分詞器
-                self._load_dart_tokenizer()
-                # 加入快取
-                DartGenerator._tokenizer_cache[self.tokenizer_name] = DartGenerator.dart_tokenizer  # type: ignore
-                DartGenerator._current_tokenizer_key = self.tokenizer_name
+        with self.runtime_guard():
+            if self.tokenizer_name != DartGenerator._current_tokenizer_key:
+                if self.tokenizer_name in DartGenerator._tokenizer_cache:
+                    DartGenerator.dart_tokenizer = DartGenerator._tokenizer_cache[self.tokenizer_name]
+                    DartGenerator._current_tokenizer_key = self.tokenizer_name
+                    logger.info(f"Switched to cached tokenizer: {self.tokenizer_name}")
+                else:
+                    self._load_dart_tokenizer()
+                    DartGenerator._tokenizer_cache[self.tokenizer_name] = DartGenerator.dart_tokenizer  # type: ignore
+                    DartGenerator._current_tokenizer_key = self.tokenizer_name
 
     def get_vocab_list(self) -> list[str]:
-        self.load_tokenizer_if_needed()
-        assert DartGenerator.dart_tokenizer is not None
-        return list(DartGenerator.dart_tokenizer.vocab.keys()) # type: ignore
+        with self.runtime_guard():
+            self.load_tokenizer_if_needed()
+            assert DartGenerator.dart_tokenizer is not None
+            return list(DartGenerator.dart_tokenizer.vocab.keys()) # type: ignore
 
     def get_special_vocab_list(self) -> list[str]:
-        self.load_tokenizer_if_needed()
-        assert DartGenerator.dart_tokenizer is not None
-        # .get_added_vocab() returns a dict of token string to int ID for added tokens
-        # To get list of added token strings:
-        return list(DartGenerator.dart_tokenizer.get_added_vocab().keys()) # type: ignore
+        with self.runtime_guard():
+            self.load_tokenizer_if_needed()
+            assert DartGenerator.dart_tokenizer is not None
+            return list(DartGenerator.dart_tokenizer.get_added_vocab().keys()) # type: ignore
 
 
     def compose_prompt(
@@ -257,143 +260,117 @@ class DartGenerator:
     ) -> str:
         """Upsamples prompt using the DART model"""
 
-        start_time = time.time()
+        with self.runtime_guard():
+            start_time = time.time()
 
-        self.load_tokenizer_if_needed()
-        self.load_model_if_needed()
+            self.load_tokenizer_if_needed()
+            self.load_model_if_needed()
 
-        assert DartGenerator.dart_tokenizer is not None, "Tokenizer not loaded"
-        assert DartGenerator.dart_model is not None, "Model not loaded"
-        
-        # Ensure input_ids are on the same device as the model
-        model_device = DartGenerator.dart_model.device
+            assert DartGenerator.dart_tokenizer is not None, "Tokenizer not loaded"
+            assert DartGenerator.dart_model is not None, "Model not loaded"
+            model_device = DartGenerator.dart_model.device
 
-        try:
-            input_ids_data = DartGenerator.dart_tokenizer.encode_plus(
-                prompt, return_tensors="pt"
-            )
-            input_ids = input_ids_data.input_ids.to(model_device)
-            # attention_mask = input_ids_data.attention_mask.to(model_device) # If model uses attention mask explicitly in generate
-        except Exception as e:
-            logger.error(f"Error encoding prompt: {prompt}. Error: {e}")
-            return "" # Or raise error
-
-        negative_prompt_ids_tensor = None
-        # negative_prompt_attention_mask = None # If model uses attention mask explicitly
-        if negative_prompt and negative_prompt.strip() != "":
             try:
-                negative_ids_data = DartGenerator.dart_tokenizer.encode_plus(
-                    negative_prompt,
-                    return_tensors="pt",
+                input_ids_data = DartGenerator.dart_tokenizer.encode_plus(
+                    prompt, return_tensors="pt"
                 )
-                negative_prompt_ids_tensor = negative_ids_data.input_ids.to(model_device)
-                # negative_prompt_attention_mask = negative_ids_data.attention_mask.to(model_device)
+                input_ids = input_ids_data.input_ids.to(model_device)
             except Exception as e:
-                logger.error(f"Error encoding negative_prompt: {negative_prompt}. Error: {e}")
-                # Decide: proceed without negative, or fail? For now, proceed without.
-                negative_prompt_ids_tensor = None
+                logger.error(f"Error encoding prompt: {prompt}. Error: {e}")
+                raise RuntimeError("Failed to encode the DART prompt input.") from e
 
+            negative_prompt_ids_tensor = None
+            if negative_prompt and negative_prompt.strip() != "":
+                try:
+                    negative_ids_data = DartGenerator.dart_tokenizer.encode_plus(
+                        negative_prompt,
+                        return_tensors="pt",
+                    )
+                    negative_prompt_ids_tensor = negative_ids_data.input_ids.to(model_device)
+                except Exception as e:
+                    logger.error(f"Error encoding negative_prompt: {negative_prompt}. Error: {e}")
+                    negative_prompt_ids_tensor = None
 
-        # Prepare logits processor if CFG is enabled and negative prompt exists
-        # 注意：ONNX 模型不支援 CFG logits processor (ORTModelForCausalLM 缺少 _is_stateful 屬性)
-        logits_processor = None
-        is_onnx_backend = self.model_backend in [
-            MODEL_BACKEND_TYPE.get("ONNX", "ONNX"),
-            MODEL_BACKEND_TYPE.get("ONNX_QUANTIZED", "ONNX (Quantized)")
-        ]
-        
-        if negative_prompt_ids_tensor is not None and cfg_scale > 1.0:
-            if is_onnx_backend:
-                logger.warning("CFG (Classifier-Free Guidance) is not supported with ONNX backend. Skipping CFG.")
+            logits_processor = None
+            is_onnx_backend = self.model_backend in [
+                MODEL_BACKEND_TYPE.get("ONNX", "ONNX"),
+                MODEL_BACKEND_TYPE.get("ONNX_QUANTIZED", "ONNX (Quantized)")
+            ]
+
+            if negative_prompt_ids_tensor is not None and cfg_scale > 1.0:
+                if is_onnx_backend:
+                    logger.warning("CFG (Classifier-Free Guidance) is not supported with ONNX backend. Skipping CFG.")
+                else:
+                    logits_processor = LogitsProcessorList(
+                        [
+                            UnbatchedClassifierFreeGuidanceLogitsProcessor(
+                                guidance_scale=cfg_scale,
+                                model=DartGenerator.dart_model,
+                                unconditional_ids=negative_prompt_ids_tensor,
+                            )
+                        ]
+                    )
+
+            max_length = input_ids.shape[1] + max_new_tokens
+
+            try:
+                if is_onnx_backend:
+                    output_ids = DartGenerator.dart_model.generate(
+                        input_ids,
+                        max_length=max_length,
+                        do_sample=do_sample,
+                        temperature=temperature if do_sample else 1.0,
+                        top_p=top_p if do_sample else 1.0,
+                        top_k=top_k if do_sample else 0,
+                        num_beams=num_beams,
+                        pad_token_id=DartGenerator.dart_tokenizer.eos_token_id,
+                    )
+                else:
+                    output_ids = DartGenerator.dart_model.generate(
+                        input_ids,
+                        max_length=max_length,
+                        min_new_tokens=min_new_tokens,
+                        do_sample=do_sample,
+                        temperature=temperature,
+                        top_p=top_p,
+                        top_k=top_k,
+                        num_beams=num_beams,
+                        bad_words_ids=bad_words_ids,
+                        no_repeat_ngram_size=1,
+                        logits_processor=logits_processor,
+                    )
+            except Exception as e:
+                logger.error(f"Error during model.generate: {e}")
+                logger.error(f"Input IDs shape: {input_ids.shape if input_ids is not None else 'None'}")
+                logger.error(f"Parameters: max_length={max_length}, do_sample={do_sample}, temperature={temperature}, top_p={top_p}, top_k={top_k}, num_beams={num_beams}")
+                raise RuntimeError("Failed to run DART model.generate().") from e
+
+            if output_ids is None:
+                logger.error("model.generate returned None")
+                raise RuntimeError("DART model returned no generated output.")
+
+            logger.debug(f"Generate output type: {type(output_ids)}, shape: {output_ids.shape if hasattr(output_ids, 'shape') else 'N/A'}")
+            generated_token_ids = output_ids[0][input_ids.shape[1]:]
+
+            try:
+                decoded = DartGenerator.dart_tokenizer.decode(
+                    generated_token_ids,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=True,
+                )
+            except Exception as e:
+                logger.error(f"Error decoding generated token IDs: {generated_token_ids}. Error: {e}")
+                raise RuntimeError("Failed to decode DART generated token IDs.") from e
+
+            logger.debug(f"Raw generated tags: {decoded}")
+            tags_list = [tag.strip() for tag in decoded.split(',') if tag.strip()]
+            if not tags_list:
+                escaped = ""
             else:
-                logits_processor = LogitsProcessorList(
-                    [
-                        UnbatchedClassifierFreeGuidanceLogitsProcessor(
-                            guidance_scale=cfg_scale,
-                            model=DartGenerator.dart_model,
-                            unconditional_ids=negative_prompt_ids_tensor,
-                        )
-                    ]
-                )
-        
-        # Ensure max_new_tokens is reasonable
-        max_length = input_ids.shape[1] + max_new_tokens
+                escaped_tags_list = escape_webui_special_symbols(tags_list)
+                escaped = ", ".join(escaped_tags_list)
 
-        try:
-            # ONNX 模型可能不支援所有生成參數，使用簡化版本
-            if is_onnx_backend:
-                # ONNX 模型使用簡化參數
-                output_ids = DartGenerator.dart_model.generate(
-                    input_ids,
-                    max_length=max_length,
-                    do_sample=do_sample,
-                    temperature=temperature if do_sample else 1.0,
-                    top_p=top_p if do_sample else 1.0,
-                    top_k=top_k if do_sample else 0,
-                    num_beams=num_beams,
-                    pad_token_id=DartGenerator.dart_tokenizer.eos_token_id,
-                )
-            else:
-                output_ids = DartGenerator.dart_model.generate(
-                    input_ids,
-                    max_length=max_length,
-                    min_new_tokens=min_new_tokens,
-                    do_sample=do_sample,
-                    temperature=temperature,
-                    top_p=top_p,
-                    top_k=top_k,
-                    num_beams=num_beams,
-                    bad_words_ids=bad_words_ids,
-                    no_repeat_ngram_size=1,
-                    logits_processor=logits_processor,
-                )
-        except Exception as e:
-            logger.error(f"Error during model.generate: {e}")
-            logger.error(f"Input IDs shape: {input_ids.shape if input_ids is not None else 'None'}")
-            logger.error(f"Parameters: max_length={max_length}, do_sample={do_sample}, temperature={temperature}, top_p={top_p}, top_k={top_k}, num_beams={num_beams}")
-            return f"Error generating tags: {e}"
+            end_time = time.time()
+            logger.info(f"Upsampling tags completed in {end_time - start_time:.2f} seconds. Output: '{escaped[:100]}...'")
 
-        # 檢查輸出是否有效
-        if output_ids is None:
-            logger.error("model.generate returned None")
-            return "Error generating tags: model returned None"
-        
-        logger.debug(f"Generate output type: {type(output_ids)}, shape: {output_ids.shape if hasattr(output_ids, 'shape') else 'N/A'}")
-
-        # Decode only the newly generated tokens
-        # output_ids[0] contains the full sequence (input_ids + generated_ids)
-        generated_token_ids = output_ids[0][input_ids.shape[1]:]
-        
-        try:
-            decoded = DartGenerator.dart_tokenizer.decode(
-                generated_token_ids,
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=True, # Usually good for readability
-            )
-        except Exception as e:
-            logger.error(f"Error decoding generated token IDs: {generated_token_ids}. Error: {e}")
-            return "" # Or raise
-
-        logger.debug(f"Raw generated tags: {decoded}")
-
-        # REVIEW: escape_webui_special_symbols - its necessity in ComfyUI context.
-        # For now, we keep it to maintain original behavior as much as possible.
-        # If it causes issues or is not needed, it can be simplified to:
-        # cleaned_tags = [tag.strip() for tag in decoded.split(",") if tag.strip()]
-        # escaped = ", ".join(cleaned_tags)
-        
-        # Splitting by comma, applying escape, then rejoining.
-        # This assumes tags are comma-separated in the decoded string.
-        tags_list = [tag.strip() for tag in decoded.split(',') if tag.strip()]
-        if not tags_list:
-            escaped = ""
-        else:
-            # The original escape_webui_special_symbols expects a list of strings.
-            escaped_tags_list = escape_webui_special_symbols(tags_list)
-            escaped = ", ".join(escaped_tags_list)
-
-
-        end_time = time.time()
-        logger.info(f"Upsampling tags completed in {end_time - start_time:.2f} seconds. Output: '{escaped[:100]}...'")
-
-        return escaped
+            return escaped
