@@ -143,7 +143,7 @@ This repository now exposes a structured service layer for external callers that
 The service path is intended for host integrations such as editor-toolbar actions:
 
 - success returns a structured result object with `final_prompt`, `generated_suffix`, and resolved runtime metadata,
-- invalid model/runtime/analyzer/generation failures raise typed exceptions,
+- invalid request/runtime/analyzer/generation failures raise typed exceptions, including malformed toolbar numeric inputs,
 - runtime cache access is guarded for background-thread delegation,
 - the default toolbar profile pins a conservative ONNX-quantized configuration rather than exposing the full node parameter surface immediately.
 

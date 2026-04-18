@@ -152,6 +152,24 @@ def _validate_tag_length(tag_length: str) -> str:
     )
 
 
+def _coerce_int(value: object, *, field_name: str) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise DanbooruUpsamplerInvalidRequestError(
+            f"{field_name} must be an integer-compatible value."
+        ) from exc
+
+
+def _coerce_float(value: object, *, field_name: str) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise DanbooruUpsamplerInvalidRequestError(
+            f"{field_name} must be a float-compatible value."
+        ) from exc
+
+
 def resolve_runtime_selection(
     *,
     model_name: str,
@@ -214,7 +232,7 @@ def build_toolbar_request(
     seed: object | None = None,
     profile: DanbooruUpsamplerToolbarProfile = DEFAULT_TOOLBAR_PROFILE,
 ) -> DanbooruUpsamplerRequest:
-    normalized_seed = profile.seed if seed is None else int(seed)
+    normalized_seed = profile.seed if seed is None else _coerce_int(seed, field_name="seed")
     return DanbooruUpsamplerRequest(
         prompt=str(prompt or ""),
         model_name=profile.model_name,
@@ -268,6 +286,17 @@ def upsample_prompt(
 ) -> DanbooruUpsamplerResult:
     normalized_prompt = str(request.prompt or "").strip()
     tag_length = _validate_tag_length(request.tag_length)
+    # IMPORTANT: validate host-facing numeric inputs before runtime construction; external callers rely on typed invalid_request failures instead of raw cast errors.
+    normalized_cfg_scale = _coerce_float(request.cfg_scale, field_name="cfg_scale")
+    normalized_seed = _coerce_int(request.seed, field_name="seed")
+    normalized_max_new_tokens = _coerce_int(
+        request.max_new_tokens,
+        field_name="max_new_tokens",
+    )
+    normalized_temperature = _coerce_float(request.temperature, field_name="temperature")
+    normalized_top_p = _coerce_float(request.top_p, field_name="top_p")
+    normalized_top_k = _coerce_int(request.top_k, field_name="top_k")
+    normalized_num_beams = _coerce_int(request.num_beams, field_name="num_beams")
     runtime = resolve_runtime_selection(
         model_name=request.model_name,
         model_backend=request.model_backend,
@@ -310,7 +339,7 @@ def upsample_prompt(
             positive_result = analyzer.analyze(normalized_prompt)
             negative_result: ImagePromptAnalyzingResult | None = None
             negative_prompt_tags = str(request.negative_prompt_tags or "").strip()
-            if negative_prompt_tags and float(request.cfg_scale) > 1.0:
+            if negative_prompt_tags and normalized_cfg_scale > 1.0:
                 negative_result = analyzer.analyze(negative_prompt_tags)
         except Exception as exc:
             raise DanbooruUpsamplerAnalyzerError(
@@ -332,21 +361,21 @@ def upsample_prompt(
             length_special_token=length_special_token,
         )
         bad_words_ids = generator.get_bad_words_ids(str(request.ban_tags or "").strip())
-        set_seed(int(request.seed) % (SEED_MAX + 1))
+        set_seed(normalized_seed % (SEED_MAX + 1))
 
         try:
             generated_suffix = generator.generate(
                 prompt=llm_prompt,
-                max_new_tokens=int(request.max_new_tokens),
+                max_new_tokens=normalized_max_new_tokens,
                 min_new_tokens=0,
                 do_sample=True,
-                temperature=float(request.temperature),
-                top_p=float(request.top_p),
-                top_k=int(request.top_k),
-                num_beams=int(request.num_beams),
+                temperature=normalized_temperature,
+                top_p=normalized_top_p,
+                top_k=normalized_top_k,
+                num_beams=normalized_num_beams,
                 bad_words_ids=bad_words_ids,
-                negative_prompt=cfg_negative_prompt if float(request.cfg_scale) > 1.0 else None,
-                cfg_scale=float(request.cfg_scale) if cfg_negative_prompt else 1.0,
+                negative_prompt=cfg_negative_prompt if normalized_cfg_scale > 1.0 else None,
+                cfg_scale=normalized_cfg_scale if cfg_negative_prompt else 1.0,
             )
         except Exception as exc:
             raise DanbooruUpsamplerGenerationError(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import unittest
+from dataclasses import replace
 from unittest import mock
 
 from danbooru_upsampler.service import (
@@ -40,6 +41,10 @@ class DanbooruUpsamplerServiceTests(unittest.TestCase):
         self.assertEqual(request.model_backend, DEFAULT_TOOLBAR_PROFILE.model_backend)
         self.assertEqual(request.model_device, DEFAULT_TOOLBAR_PROFILE.model_device)
         self.assertEqual(request.tag_length, DEFAULT_TOOLBAR_PROFILE.tag_length)
+
+    def test_build_toolbar_request_wraps_invalid_seed_as_typed_request_error(self) -> None:
+        with self.assertRaises(DanbooruUpsamplerInvalidRequestError):
+            build_toolbar_request("1girl, solo", seed="not-an-int")
 
     def test_resolve_runtime_selection_falls_back_to_quantized_onnx_when_needed(self) -> None:
         runtime = resolve_runtime_selection(
@@ -93,6 +98,31 @@ class DanbooruUpsamplerServiceTests(unittest.TestCase):
                     model_name="unknown-model",
                 )
             )
+
+    def test_upsample_prompt_wraps_invalid_numeric_request_values(self) -> None:
+        base_request = DanbooruUpsamplerRequest(
+            prompt="1girl, solo",
+            model_name="dart-v1-sft",
+            model_device="cpu",
+            model_backend=MODEL_BACKEND_TYPE["ONNX_QUANTIZED"],
+        )
+
+        invalid_cases = {
+            "cfg_scale": "bad-float",
+            "seed": "bad-int",
+            "max_new_tokens": "bad-int",
+            "temperature": "bad-float",
+            "top_p": "bad-float",
+            "top_k": "bad-int",
+            "num_beams": "bad-int",
+        }
+
+        for field_name, invalid_value in invalid_cases.items():
+            with self.subTest(field_name=field_name):
+                with mock.patch("danbooru_upsampler.service.DartGenerator") as mocked_generator_cls:
+                    with self.assertRaises(DanbooruUpsamplerInvalidRequestError):
+                        upsample_prompt(replace(base_request, **{field_name: invalid_value}))
+                    mocked_generator_cls.assert_not_called()
 
     def test_upsample_prompt_wraps_runtime_failures(self) -> None:
         request = DanbooruUpsamplerRequest(
