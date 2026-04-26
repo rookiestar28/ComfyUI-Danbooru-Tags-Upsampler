@@ -1,16 +1,11 @@
 # Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
 
 # C extensions
 *.so
 
 # Distribution / packaging
 .Python
-build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
@@ -25,10 +20,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-.planning/
 .pplanning/
-ROADMAP.md
-roadmap.md
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -41,18 +33,14 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
-htmlcov/
 .tox/
 .nox/
-.coverage
 .coverage.*
 .cache
 nosetests.xml
-coverage.xml
 *.cover
 *.py,cover
 .hypothesis/
-.pytest_cache/
 cover/
 
 # Translations
@@ -60,7 +48,6 @@ cover/
 *.pot
 
 # Django stuff:
-*.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -124,11 +111,7 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
 .venv
-env/
-venv/
-ENV/
 env.bak/
 venv.bak/
 
@@ -143,7 +126,6 @@ venv.bak/
 /site
 
 # mypy
-.mypy_cache/
 .dmypy.json
 dmypy.json
 
@@ -162,3 +144,58 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+# Agent/local project exclusions
+.pla*/
+re*/
+RE*/
+ROA*.md
+roa*.md
+AG*.md
+
+# Secrets and local environment
+.env
+.env.*
+*.env
+!.env.example
+!.env.sample
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+.venv-*/
+venv/
+ENV/
+
+# Node / frontend tests
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+playwright-report/
+test-results/
+coverage/
+
+# Build, cache, temp, and local tool output
+dist/
+build/
+.cache/
+.tmp/
+tmp/
+temp/
+*.log
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
