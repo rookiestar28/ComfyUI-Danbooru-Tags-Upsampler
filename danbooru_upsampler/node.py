@@ -15,6 +15,18 @@ from .service import (
 logger = logging.getLogger("Comfy.DanbooruTagsUpsamplerNode") # ComfyUI conventional logger name
 
 class DanbooruTagsUpsamplerNode:
+    DESCRIPTION = (
+        "Expands a comma-separated anime prompt with generated Danbooru tags "
+        "using a DART language model."
+    )
+    SEARCH_ALIASES = [
+        "danbooru",
+        "tags",
+        "prompt upsampler",
+        "anime tags",
+        "dart",
+    ]
+
     @classmethod
     def INPUT_TYPES(cls):
         model_choices = list(DART_MODELS.keys())
@@ -45,6 +57,7 @@ class DanbooruTagsUpsamplerNode:
 
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("upsampled_prompt",)
+    OUTPUT_TOOLTIPS = ("The original prompt plus generated Danbooru tag completions.",)
     FUNCTION = "upsample"
     CATEGORY = "Prompt Styling/casual_gamer28"
 

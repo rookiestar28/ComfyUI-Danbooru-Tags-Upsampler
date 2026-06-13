@@ -71,3 +71,12 @@ class DanbooruUpsamplerNodeTests(unittest.TestCase):
         self.assertIs(NODE_CLASS_MAPPINGS["DanbooruTagsUpsamplerNodeRay"], DanbooruTagsUpsamplerNode)
         self.assertEqual(NODE_DISPLAY_NAME_MAPPINGS["DanbooruTagsUpsampler"], "Danbooru_Tags_Upsampler")
         self.assertEqual(NODE_DISPLAY_NAME_MAPPINGS["DanbooruTagsUpsamplerNodeRay"], "Danbooru_Tags_Upsampler")
+
+    def test_node_exposes_frontend_discovery_metadata(self) -> None:
+        self.assertIn("Danbooru", DanbooruTagsUpsamplerNode.DESCRIPTION)
+        self.assertIn("danbooru", DanbooruTagsUpsamplerNode.SEARCH_ALIASES)
+        self.assertIn("prompt upsampler", DanbooruTagsUpsamplerNode.SEARCH_ALIASES)
+        self.assertEqual(
+            DanbooruTagsUpsamplerNode.OUTPUT_TOOLTIPS,
+            ("The original prompt plus generated Danbooru tag completions.",),
+        )
