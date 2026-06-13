@@ -37,7 +37,7 @@ This project is a port and adaptation of the [sd-danbooru-tags-upsampler](https:
 
     ```bash
     cd ComfyUI/custom_nodes/
-    git clone [https://github.com/rookiestar28/ComfyUI-Danbooru-Tags-Upsampler.git](https://github.com/rookiestar28/ComfyUI-Danbooru-Tags-Upsampler.git)
+    git clone https://github.com/rookiestar28/ComfyUI-Danbooru-Tags-Upsampler.git
     ```
 
 2. **Install Dependencies**:
@@ -47,7 +47,7 @@ This project is a port and adaptation of the [sd-danbooru-tags-upsampler](https:
 
         ```bash
         cd ComfyUI-Danbooru-Tags-Upsampler
-        python install.py 
+        python install.py
         ```
 
         (Note: The `install.py` script should ideally install dependencies from `requirements.txt`.)
@@ -59,18 +59,26 @@ This project is a port and adaptation of the [sd-danbooru-tags-upsampler](https:
         pip install -r requirements.txt
         ```
 
-    The `requirements.txt` should include:
-    - `torch`
+    The `requirements.txt` installs the node-specific runtime dependencies:
     - `transformers`
     - `optimum[onnxruntime]`
-    - (and any other specific versions or dependencies identified during development)
+    - `tokenizers`
+    - `sentencepiece`
+
+    PyTorch is intentionally not pinned by this node because ComfyUI and ComfyUI Desktop manage their own `torch`, `torchvision`, and `torchaudio` builds for the selected device.
 
 3. **Download Tag Files (if not included or if path needs adjustment)**:
     This node relies on specific tag lists (e.g., `copyright.txt`, `character.txt`, `quality.txt`) for analyzing prompts. These files should be located in a `tags` directory within the `ComfyUI-Danbooru-Tags-Upsampler` custom node folder (i.e., `ComfyUI/custom_nodes/ComfyUI-Danbooru-Tags-Upsampler/tags/`).
     If you have cloned the repository, these files should already be in place.
 
 4. **Start/Restart ComfyUI**:
-    After installation, restart ComfyUI. The "Danbooru Tags Upsampler" node should appear under the "Prompt Styling" category (or whichever category you set in `nodes.py`).
+    After installation, restart ComfyUI. The "Danbooru Tags Upsampler" node should appear under the "Prompt Styling/casual_gamer28" category.
+
+### ComfyUI Desktop Notes
+
+ComfyUI Desktop uses a managed Python environment and installs core packages with its own tooling. Install this repository under the Desktop installation's `custom_nodes` directory, then use the Desktop or Manager dependency reinstall flow if the node-specific packages are missing.
+
+For Desktop or non-CUDA systems, select `cpu` as `model_device`. Select `cuda` only when the Desktop environment has a compatible NVIDIA PyTorch runtime.
 
 ## How to Use
 
@@ -150,6 +158,7 @@ The service path is intended for host integrations such as editor-toolbar action
 ## For Developers / Troubleshooting
 
 - **Tags Directory**: The analyzer component loads classification tags from the `tags/` directory within this custom node's folder. Ensure this directory and its contents (`copyright.txt`, `character.txt`, `quality.txt`) are present.
+- **Dependencies**: This node depends on ComfyUI's host-managed PyTorch runtime. Do not install a separate `torch` build for this node unless you are intentionally repairing the host environment.
 - **Escaping Brackets**: The handling of parentheses `()` and square brackets `[]` in prompts can be tricky. This node includes logic (from the original extension) to escape/unescape these, but their interaction with ComfyUI's CLIPTextEncode behavior should be observed. If you encounter issues with prompts containing brackets, this might be an area to investigate.
 - **Error Behavior**: External hosts should prefer the structured service API instead of parsing node output strings. The node wrapper now fails explicitly when the service reports runtime errors.
 
@@ -161,4 +170,4 @@ Please see the original repository for full acknowledgements to other influentia
 
 ## License
 
-This ComfyUI custom node is provided under the same license as the original project, if applicable, or defaults to [MIT License/Apache 2.0/etc. - **YOU NEED TO CHOOSE OR CONFIRM THIS** based on the original `LICENSE` file and your intentions]. Please check the `LICENSE` file in this repository.
+This repository is licensed under the Apache License 2.0. See the `LICENSE` file for the full license text.

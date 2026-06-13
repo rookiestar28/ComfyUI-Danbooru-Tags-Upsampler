@@ -50,6 +50,19 @@ python -m venv .venv
 .venv\Scripts\python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
+### 4. E2E applicability
+
+This repository currently has no frontend application, `package.json`, npm script, Playwright suite, or browser harness. Frontend E2E is therefore non-applicable for the current Python-only custom node.
+
+Replacement validation lane:
+
+- `compileall` verifies Python syntax and importable files.
+- package-style root import smoke verifies ComfyUI custom-node bootstrap compatibility.
+- `unittest` verifies the service seam, node wrapper, registry aliases, runtime lock, and package metadata.
+- manual host smoke remains the optional live ComfyUI check when node registration or bootstrap behavior changes.
+
+Do not run `npm test` for this repository unless a frontend harness is intentionally added in a future change. If a frontend harness is added, follow `tests/E2E_TESTING_NOTICE.md` and `tests/E2E_TESTING_SOP.md`.
+
 ## Mocking Rules
 
 - Unit tests must mock `DartGenerator`, `DartAnalyzer`, and any heavy runtime/model-loading path.
