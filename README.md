@@ -1,16 +1,15 @@
 # ComfyUI Danbooru Tags Upsampler
 
-> **📅 12/2025 Updated:**
->
-> - Added multiple DART model selection (dart-v1-sft, dart-v2-sft, dart-v2-moe-sft)
-> - Added smart ONNX file selection based on model availability
-> - Added model caching for fast switching
-> - Fixed ONNX/Transformers compatibility issues
-> - Removed dart-v3 (gated model requiring HF authorization)
-
 This is a custom node for ComfyUI that upsamples prompts by generating or completing Danbooru tags using a lightweight LLM. It's designed for users who want to quickly create diverse, natural, and detailed prompts for anime-style image generation without extensive manual input.
 
 This project is a port and adaptation of the [sd-danbooru-tags-upsampler](https://github.com/p1atdev/sd-danbooru-tags-upsampler) extension originally developed by [p1atdev](https://github.com/p1atdev) for Stable Diffusion Web UI (AUTOMATIC1111). Many thanks to the original author for their excellent work!
+
+## Current Status
+
+- Supports the V1 ComfyUI custom-node loader through `NODE_CLASS_MAPPINGS`.
+- Declares `requires-python = ">=3.10"` and `requires-comfyui = ">=0.22.3"` in `pyproject.toml`.
+- Exposes frontend discovery metadata through `DESCRIPTION`, `SEARCH_ALIASES`, and `OUTPUT_TOOLTIPS`.
+- Does not pin `torch`, `torchvision`, or `torchaudio`; those packages are managed by the ComfyUI host environment.
 
 ## Features
 
@@ -42,17 +41,16 @@ This project is a port and adaptation of the [sd-danbooru-tags-upsampler](https:
 
 2. **Install Dependencies**:
     Navigate into the cloned directory and install the required Python packages.
-    - **Method 1: Using `install.py` (if provided and configured)**
-        If an `install.py` script is present in the root of this custom node's directory, ComfyUI might attempt to run it automatically on startup. Alternatively, you might need to run it manually (ensure your ComfyUI's Python environment is active):
+    - **Method 1: Using `install.py`**
+        The repository includes an `install.py` script that installs `requirements.txt` with the active Python interpreter. Run it from the custom node directory with your ComfyUI Python environment active:
 
         ```bash
         cd ComfyUI-Danbooru-Tags-Upsampler
         python install.py
         ```
 
-        (Note: The `install.py` script should ideally install dependencies from `requirements.txt`.)
     - **Method 2: Manual Installation via pip**
-        If `install.py` is not available or you prefer manual control, activate your ComfyUI's Python environment and run:
+        If you prefer manual control, activate your ComfyUI's Python environment and run:
 
         ```bash
         cd ComfyUI-Danbooru-Tags-Upsampler
@@ -76,7 +74,9 @@ This project is a port and adaptation of the [sd-danbooru-tags-upsampler](https:
 
 ### ComfyUI Desktop Notes
 
-ComfyUI Desktop uses a managed Python environment and installs core packages with its own tooling. Install this repository under the Desktop installation's `custom_nodes` directory, then use the Desktop or Manager dependency reinstall flow if the node-specific packages are missing.
+ComfyUI Desktop uses a managed Python environment and installs core packages with uv. During setup, Desktop asks for a ComfyUI files location, stored as `basePath` in Desktop's `config.json`; install this repository under that location's `custom_nodes` directory.
+
+If the node-specific packages are missing, use Desktop or Manager's dependency reinstall flow instead of manually installing a separate PyTorch stack.
 
 For Desktop or non-CUDA systems, select `cpu` as `model_device`. Select `cuda` only when the Desktop environment has a compatible NVIDIA PyTorch runtime.
 
@@ -96,7 +96,7 @@ For Desktop or non-CUDA systems, select `cpu` as `model_device`. Select `cuda` o
         - `short`: < 20 tags
         - `long`: < 40 tags (recommended starting point)
         - `very long`: > 40 tags
-    - **`seed`**: Seed for the tag generation process. Use `-1` for a random seed (though the node currently expects a positive integer; random seed logic might need to be implemented if desired similarly to the original). A fixed seed with the same input prompt will produce the same upsampled tags.
+    - **`seed`**: Seed for the tag generation process. The node accepts integer seeds from `0` through `4294967295`. A fixed seed with the same input prompt and generation settings will produce reproducible upsampling for the same runtime.
     - **`temperature`**: Controls randomness. Higher values (e.g., 1.5-2.0) mean more diverse/surprising tags; lower values (e.g., 0.7-1.0) mean more predictable/conservative tags.
     - **`top_k`**: Considers the k most likely tokens at each step.
     - **`top_p`**: Nucleus sampling; considers the smallest set of tokens whose cumulative probability exceeds p.
@@ -114,11 +114,7 @@ For Desktop or non-CUDA systems, select `cpu` as `model_device`. Select `cuda` o
 
 4. The output `upsampled_prompt` can then be connected to a `CLIPTextEncode` node (or similar) for image generation.
 
-*(Consider adding a simple workflow image here if possible, showing [Primitive String Node] -> [Danbooru Tags Upsampler] -> [CLIPTextEncode])*
-
 ## Showcase / Examples
-
-*(This section can be adapted from the original README's "Showcases" but should ideally use images generated via the ComfyUI node if possible. For now, you can state that results are similar to the original extension and link to its showcase, or re-use its examples if the generation parameters are comparable.)*
 
 The goal of this node is to enrich simple prompts. For example:
 
@@ -137,7 +133,7 @@ This node supports multiple DART models from Hugging Face:
 | dart-v2-sft | [p1atdev/dart-v2-sft](https://huggingface.co/p1atdev/dart-v2-sft) | ✅ (Quantized only) |
 | dart-v2-moe-sft | [p1atdev/dart-v2-moe-sft](https://huggingface.co/p1atdev/dart-v2-moe-sft) | ❌ |
 
-Models will be downloaded automatically on first use to your Hugging Face cache directory (`~/.cache/huggingface/hub/`).
+Models will be downloaded automatically on first use through Hugging Face Hub caching. The exact cache location depends on your operating system and Hugging Face environment variables such as `HF_HOME` or `HF_HUB_CACHE`.
 
 ## Host Integration
 
@@ -159,6 +155,7 @@ The service path is intended for host integrations such as editor-toolbar action
 
 - **Tags Directory**: The analyzer component loads classification tags from the `tags/` directory within this custom node's folder. Ensure this directory and its contents (`copyright.txt`, `character.txt`, `quality.txt`) are present.
 - **Dependencies**: This node depends on ComfyUI's host-managed PyTorch runtime. Do not install a separate `torch` build for this node unless you are intentionally repairing the host environment.
+- **Python and ComfyUI Versions**: Package metadata declares Python `>=3.10` and ComfyUI `>=0.22.3`. ComfyUI Desktop's managed Python environment is expected to satisfy this in current Desktop baselines.
 - **Escaping Brackets**: The handling of parentheses `()` and square brackets `[]` in prompts can be tricky. This node includes logic (from the original extension) to escape/unescape these, but their interaction with ComfyUI's CLIPTextEncode behavior should be observed. If you encounter issues with prompts containing brackets, this might be an area to investigate.
 - **Error Behavior**: External hosts should prefer the structured service API instead of parsing node output strings. The node wrapper now fails explicitly when the service reports runtime errors.
 
