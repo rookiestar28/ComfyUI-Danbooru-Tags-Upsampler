@@ -3,7 +3,6 @@
 # Core Hugging Face libraries
 transformers>=4.35.0
 optimum[onnxruntime]>=1.16.0
-optimum-onnx
 # Tokenizers is often a dependency of transformers
 tokenizers>=0.14.0
 
