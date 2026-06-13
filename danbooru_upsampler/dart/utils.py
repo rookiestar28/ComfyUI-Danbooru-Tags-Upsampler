@@ -99,7 +99,7 @@ def _get_tag_pattern(tag: str) -> re.Pattern:
     else:
         # Escape all regex special characters if no wildcard
         pattern_str = re.escape(tag)
-    
+
     try:
         return re.compile(pattern_str)
     except re.error as e:

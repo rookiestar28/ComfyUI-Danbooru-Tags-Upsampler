@@ -80,7 +80,7 @@ class DartGenerator:
             logger.setLevel(logging.DEBUG)
         else:
             logger.setLevel(logging.INFO)
-        
+
         logger.debug(f"DartGenerator initialized with: model_name='{model_name}', tokenizer_name='{tokenizer_name}', model_backend='{model_backend}', model_device='{model_device}', debug_logging={debug_logging}")
 
     @contextmanager
@@ -91,7 +91,7 @@ class DartGenerator:
     def _load_dart_model(self):
         logger.debug(f"Loading DART model: {self.model_name} with backend: {self.model_backend}")
         is_onnx = False
-        
+
         if self.model_backend == MODEL_BACKEND_TYPE.get("ORIGINAL", "original"):
             DartGenerator.dart_model = AutoModelForCausalLM.from_pretrained(self.model_name)
         elif self.model_backend in [MODEL_BACKEND_TYPE.get("ONNX", "ONNX"), MODEL_BACKEND_TYPE.get("ONNX_QUANTIZED", "ONNX (Quantized)")]:
@@ -99,7 +99,7 @@ class DartGenerator:
             file_name = self.onnx_file_name
             if not file_name:
                 file_name = "model_quantized.onnx" if "Quantized" in self.model_backend else "model.onnx"
-            
+
             DartGenerator.dart_model = ORTModelForCausalLM.from_pretrained(
                 self.model_name,
                 file_name=file_name,
@@ -110,13 +110,13 @@ class DartGenerator:
             raise ValueError(f"Unknown or unsupported model backend: {self.model_backend}")
 
         assert DartGenerator.dart_model is not None, "Failed to load DART model"
-        
+
         # 修復 optimum/transformers 版本不相容問題
         # ORTModelForCausalLM 類別缺少 _is_stateful 屬性，需手動添加
         if is_onnx and not hasattr(ORTModelForCausalLM, '_is_stateful'):
             ORTModelForCausalLM._is_stateful = False
             logger.debug("Patched ORTModelForCausalLM with _is_stateful attribute for compatibility.")
-        
+
         try:
             DartGenerator.dart_model.to(self.model_device)
             logger.info(f"DART model '{self.model_name}' loaded to {self.model_device} using backend {self.model_backend}")
@@ -217,7 +217,7 @@ class DartGenerator:
         ban_tags = get_valid_tag_list(tag_text)
         if not ban_tags:
             return None
-        
+
         ban_tag_patterns = get_patterns_from_tag_list(ban_tags)
         if not ban_tag_patterns:
             return None
@@ -233,7 +233,7 @@ class DartGenerator:
             for tag, token_id in vocab.items():
                 if isinstance(tag, str) and isinstance(token_id, int) and pattern.match(tag):
                     ban_words_ids.append(token_id)
-        
+
         if not ban_words_ids:
             return None
 

@@ -91,7 +91,7 @@ def normalize_rating_tags(tags: List[str]) -> Tuple[str, str]:
     if not valid_tags:
         logger.debug("No valid rating tags found in input, using default.")
         return DART_RATING_DEFAULT_PAIR
-        
+
     tags = valid_tags # Use only valid tags for normalization
 
     if len(tags) == 1:
@@ -106,17 +106,17 @@ def normalize_rating_tags(tags: List[str]) -> Tuple[str, str]:
             'Both "sfw" and "nsfw" parent rating tags are specified! Rating tag fell back to SFW default for upsampling.'
         )
         return DART_RATING_DEFAULT_PAIR
-    
+
     if parent_tags_present and child_tags_present:
         # Determine dominant parent tag
-        parent_tag = INPUT_RATING_SFW 
+        parent_tag = INPUT_RATING_SFW
         for p_tag in parent_tags_present:
             if RATING_PARENT_TAG_PRIORITY[p_tag] > RATING_PARENT_TAG_PRIORITY[parent_tag]:
                 parent_tag = p_tag
-        
+
         # Determine strongest child tag among those present
         strongest_child_tag = get_strongest_rating_tag(child_tags_present)
-        
+
         # Check for mismatch, e.g., "nsfw" parent with "rating:general" child
         expected_pair_for_parent = get_rating_tag_pair(parent_tag)
         if strongest_child_tag != expected_pair_for_parent[1] and parent_tag == DART_RATING_NSFW and strongest_child_tag in [INPUT_RATING_GENERAL, INPUT_RATING_SENSITIVE]:
@@ -193,11 +193,11 @@ class DartAnalyzer:
             logger.setLevel(logging.DEBUG)
         else:
             logger.setLevel(logging.INFO)
-        
+
         # MODIFIED: Store these settings directly
         self.escape_input_brackets_enabled = escape_input_brackets_enabled
         self.escape_output_brackets_enabled = escape_output_brackets_enabled
-        
+
         self.tags_dir = tags_dir_path
         logger.debug(f"DartAnalyzer using tags_dir: {self.tags_dir}")
 
@@ -206,7 +206,7 @@ class DartAnalyzer:
         self.copyright_tags = load_tags_in_file(self.tags_dir / "copyright.txt")
         self.character_tags = load_tags_in_file(self.tags_dir / "character.txt")
         self.quality_tags = load_tags_in_file(self.tags_dir / "quality.txt")
-        
+
         logger.debug(f"Loaded {len(self.copyright_tags)} copyright tags, {len(self.character_tags)} character tags, {len(self.quality_tags)} quality tags.")
 
         self.vocab = list(vocab) # Take a copy
@@ -241,7 +241,7 @@ class DartAnalyzer:
         """Extracts tags that are present in extract_tag_list from input_tags."""
         matched: List[str] = []
         not_matched: List[str] = []
-        
+
         # For efficient lookup if extract_tag_list is large
         extract_set = set(extract_tag_list)
 
@@ -256,7 +256,7 @@ class DartAnalyzer:
         """Preprocesses a list of tags into a comma-separated string, optionally unescaping."""
         if not tags:
             return ""
-            
+
         processed_tags = list(tags) # Work on a copy
 
         # MODIFIED: Use the instance variable for the setting
@@ -266,7 +266,7 @@ class DartAnalyzer:
             # Or, it means tags going *into* the DART model should be unescaped.
             # The original comment was: "\(\) -> ()". This is unescaping.
             processed_tags = unescape_webui_special_symbols(processed_tags)
-            
+
         return ", ".join(tag for tag in processed_tags if tag) # Ensure no empty strings from unescaping
 
     def analyze(self, image_prompt: str) -> ImagePromptAnalyzingResult:
@@ -279,7 +279,7 @@ class DartAnalyzer:
             image_prompt = str(image_prompt)
 
         input_tags_raw = self.split_tags(image_prompt)
-        
+
         # Make unique. Original did this after WebUI parsing.
         input_tags = sorted(list(set(input_tags_raw)))
         logger.debug(f"Analyzing unique input tags: {input_tags}")
@@ -289,7 +289,7 @@ class DartAnalyzer:
         copyright_tags, remaining_tags = self.extract_tags(remaining_tags, self.copyright_tags)
         character_tags, remaining_tags = self.extract_tags(remaining_tags, self.character_tags)
         quality_tags, remaining_tags = self.extract_tags(remaining_tags, self.quality_tags)
-        
+
         # Extract special vocabulary (like <|length|>, <|input_end|>)
         # These generally shouldn't be part of the 'general' tags for upsampling.
         _special_tags_extracted, remaining_tags = self.extract_tags(remaining_tags, self.special_vocab)

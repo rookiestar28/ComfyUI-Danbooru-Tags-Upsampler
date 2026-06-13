@@ -62,10 +62,10 @@ class UnbatchedClassifierFreeGuidanceLogitsProcessor(LogitsProcessor):
     ):
         if not isinstance(guidance_scale, float) or guidance_scale < 0: # Basic validation
             raise ValueError(f"`guidance_scale` has to be a non-negative float, but is {guidance_scale}")
-        
+
         self.guidance_scale = guidance_scale
         self.model = model # Stores the model instance (e.g., self.dart_model from DartGenerator)
-        
+
         # Ensure unconditional_ids and unconditional_attention_mask are on the same device as the model
         # This should ideally happen before passing them here, or this class needs to handle it.
         # For now, assume they are on the correct device or model's forward pass handles device mismatches for inputs.
@@ -89,7 +89,7 @@ class UnbatchedClassifierFreeGuidanceLogitsProcessor(LogitsProcessor):
 
         uc_input_ids = self.unconditional_context["input_ids"]
         uc_attention_mask = self.unconditional_context["attention_mask"]
-        
+
         if self.unconditional_context["first_pass"]:
             if uc_input_ids is None:
                 # Default to a single BOS token or similar if no unconditional_ids are provided.
@@ -107,7 +107,7 @@ class UnbatchedClassifierFreeGuidanceLogitsProcessor(LogitsProcessor):
 
             if uc_attention_mask is None and uc_input_ids is not None:
                 uc_attention_mask = torch.ones_like(uc_input_ids, dtype=torch.long, device=model_device)
-            
+
             # Ensure uc_input_ids and uc_attention_mask match the batch size of the conditional input
             # This is crucial if the original unconditional_ids were for batch_size=1 but conditional is >1
             if uc_input_ids is not None and uc_input_ids.shape[0] != batch_size:
@@ -120,7 +120,7 @@ class UnbatchedClassifierFreeGuidanceLogitsProcessor(LogitsProcessor):
                         f"Batch size mismatch for CFG: conditional input has batch_size {batch_size}, "
                         f"but unconditional_ids have batch_size {uc_input_ids.shape[0]}."
                     )
-            
+
             self.unconditional_context["input_ids"] = uc_input_ids
             self.unconditional_context["attention_mask"] = uc_attention_mask
             self.unconditional_context["first_pass"] = False
@@ -130,7 +130,7 @@ class UnbatchedClassifierFreeGuidanceLogitsProcessor(LogitsProcessor):
         else:
             # Subsequent steps: append the new conditional token to the unconditional sequence
             new_token_id = current_conditional_input_ids[:, -1:].clone() # Get the last token from conditional input (current step)
-            
+
             if not self.unconditional_context["use_cache"]: # If not using cache, append to full sequence
                 current_uc_input_ids = torch.cat([self.unconditional_context["input_ids"], new_token_id], dim=1)
             else: # If using cache, only pass the new token
@@ -151,7 +151,7 @@ class UnbatchedClassifierFreeGuidanceLogitsProcessor(LogitsProcessor):
             if not self.unconditional_context["use_cache"]:
                 self.unconditional_context["input_ids"] = current_uc_input_ids
             self.unconditional_context["attention_mask"] = current_uc_attention_mask
-        
+
         if current_uc_input_ids is None: # Should be handled by first_pass logic
              raise ValueError("Unconditional input_ids are None after first_pass logic. This should not happen.")
 
@@ -172,7 +172,7 @@ class UnbatchedClassifierFreeGuidanceLogitsProcessor(LogitsProcessor):
 
         if self.guidance_scale == 1.0: # No guidance
             return scores
-        
+
         # Apply log_softmax to conditional scores
         # The original paper and many implementations do CFG in log-probability space
         log_probs_conditional = torch.nn.functional.log_softmax(scores, dim=-1)
@@ -181,7 +181,7 @@ class UnbatchedClassifierFreeGuidanceLogitsProcessor(LogitsProcessor):
         # The `get_unconditional_logits` method handles the model call with its own context.
         # `input_ids` (conditional) is passed to help determine the new token for the unconditional branch if using KV cache.
         unconditional_full_logits = self.get_unconditional_logits(input_ids)
-        
+
         # We need the logits for the *next* token from the unconditional pass.
         # This corresponds to the same position as `scores` (which are for the next token of conditional pass).
         unconditional_next_token_logits = unconditional_full_logits[:, -1, :] # Get logits for the last token position
@@ -189,14 +189,14 @@ class UnbatchedClassifierFreeGuidanceLogitsProcessor(LogitsProcessor):
 
         # CFG formula: combined_log_probs = unconditional_log_probs + guidance_scale * (conditional_log_probs - unconditional_log_probs)
         # This can be rewritten as: guidance_scale * conditional_log_probs + (1 - guidance_scale) * unconditional_log_probs
-        
+
         # The formula used in the original copied code was:
         # out = guidance_scale * (scores - unconditional_logits) + unconditional_logits
         # where scores and unconditional_logits were already log_softmaxed.
         # So, log_probs_combined = log_probs_unconditional + self.guidance_scale * (log_probs_conditional - log_probs_unconditional)
 
         combined_log_probs = log_probs_unconditional + self.guidance_scale * (log_probs_conditional - log_probs_unconditional)
-        
+
         # It's important that `scores` and `unconditional_next_token_logits` have compatible shapes.
         # scores: (batch_size, vocab_size)
         # unconditional_next_token_logits: (batch_size, vocab_size)
