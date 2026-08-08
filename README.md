@@ -1,175 +1,268 @@
 # ComfyUI Danbooru Tags Upsampler
 
-This is a custom node for ComfyUI that upsamples prompts by generating or completing Danbooru tags using a lightweight LLM. It's designed for users who want to quickly create diverse, natural, and detailed prompts for anime-style image generation without extensive manual input.
+ComfyUI Danbooru Tags Upsampler is a Python custom node that expands a short, comma-separated prompt into a more detailed set of Danbooru tags using a DART language model. It is intended for anime-style image workflows where manually composing a long tag prompt would be slow or repetitive.
 
-This project is a port and adaptation of the [sd-danbooru-tags-upsampler](https://github.com/p1atdev/sd-danbooru-tags-upsampler) extension originally developed by [p1atdev](https://github.com/p1atdev) for Stable Diffusion Web UI (AUTOMATIC1111). Many thanks to the original author for their excellent work!
+This project is a ComfyUI port and adaptation of [sd-danbooru-tags-upsampler](https://github.com/p1atdev/sd-danbooru-tags-upsampler), originally created by [p1atdev](https://github.com/p1atdev) for Stable Diffusion Web UI (AUTOMATIC1111).
 
-## Current Status
+## Table of Contents
 
-- Supports the V1 ComfyUI custom-node loader through `NODE_CLASS_MAPPINGS`.
-- Declares `requires-python = ">=3.10"` and `requires-comfyui = ">=0.22.3"` in `pyproject.toml`.
-- Exposes frontend discovery metadata through `DESCRIPTION`, `SEARCH_ALIASES`, and `OUTPUT_TOOLTIPS`.
-- Does not pin `torch`, `torchvision`, or `torchaudio`; those packages are managed by the ComfyUI host environment.
-- Pins every supported DART model to an audited immutable revision; remote tokenizer code is enabled only for the reviewed v1 tokenizer.
+- [What's New in 2.3.0](#whats-new-in-230)
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Input Reference](#input-reference)
+- [Models and Backends](#models-and-backends)
+- [Compatibility and Verification](#compatibility-and-verification)
+- [Model Downloads and Trust](#model-downloads-and-trust)
+- [Host Integration API](#host-integration-api)
+- [Troubleshooting](#troubleshooting)
+- [Development and Validation](#development-and-validation)
+- [Acknowledgements](#acknowledgements)
+- [License](#license)
+
+## What's New in 2.3.0
+
+- **Truthful backend behavior:** Original, ONNX, and quantized ONNX capabilities are explicit. ONNX applies ban tags and rejects active CFG instead of silently ignoring it.
+- **Strict request validation:** Numeric bounds and non-finite floats are rejected before model, tokenizer, or analyzer construction. Service callers receive typed error codes.
+- **Runtime and cache correctness:** Model cache identity includes the immutable model revision, backend, artifact, requested device, and tokenizer trust policy. Result metadata reports the device actually used after fallback.
+- **Safer analyzer lifecycle:** Required tag resources are cached as immutable data, invalidated when files change, and fail clearly when missing or unreadable.
+- **Pinned model supply chain:** Every supported DART model uses an approved immutable revision. Remote tokenizer code is enabled only for the reviewed v1 model/revision pair.
+- **Host UX alignment:** All 15 inputs now have tooltips, the display name is clearer, search aliases are richer, and both canonical and legacy workflow IDs remain supported.
+- **Release hardening:** The legacy self-installer was removed. CI, publishing permissions, Registry metadata, and the release payload are validated for least privilege and privacy.
 
 ## Features
 
-- **Multiple Model Selection**: Choose from different DART model versions:
-  - `dart-v1-sft` - V1 Stable (Recommended)
-  - `dart-v2-sft` - V2 Improved
-  - `dart-v2-moe-sft` - V2 MoE Architecture
-- **Automated Tag Generation**: Leverages DART language models to expand your initial prompts with relevant Danbooru tags.
-- **Customizable Output**: Control various aspects of tag generation, including:
-  - Desired total tag length (very short, short, long, very long).
-  - Generation parameters like temperature, top_k, top_p, and number of beams.
-  - Banning specific tags from appearing in the upsampled results.
-  - Seed for reproducible upsampling.
-- **Classifier-Free Guidance (CFG) Support**: The Original backend supports negative prompt tags. ONNX backends reject CFG requests instead of silently ignoring them.
-- **Multiple Model Backends**: Supports original Hugging Face Transformers, ONNX, and Quantized ONNX backends for the DART model, allowing for a balance between speed and resource usage.
-- **Device Selection**: Request CPU or CUDA. If CUDA initialization fails, the runtime falls back to CPU and records/logs the actual device.
-- **Smart Model Caching**: Models and tokenizers are cached by immutable revision, backend, artifact, device request, and tokenizer trust policy.
-- **Host Integration Ready**: Exposes a structured Python service seam for external callers that need clean results, canonical node detection, and toolbar-friendly defaults.
+- Expands short prompts with generated Danbooru tags.
+- Supports three allowlisted DART models and three runtime backend choices.
+- Offers four relative output-length profiles: `very short`, `short`, `long`, and `very long`.
+- Exposes sampling controls for seed, temperature, top-k, top-p, beam count, and token limit.
+- Supports negative prompt CFG on the Original backend.
+- Applies comma-separated ban tags and supported `*` patterns on every backend.
+- Supports CPU and CUDA requests, with explicit CPU fallback when CUDA is unavailable or initialization fails.
+- Preserves the original prompt and appends the generated suffix in the ComfyUI node output.
+- Provides a structured Python service API for integrations that need resolved backend/device metadata and typed failures.
 
 ## Installation
 
-1. **Clone the Repository**:
-    Navigate to your ComfyUI `custom_nodes` directory and clone this repository:
+[ComfyUI's official custom-node guide](https://docs.comfy.org/installation/install_custom_node) recommends ComfyUI Manager when available and requires dependencies to be installed into the same Python environment that runs ComfyUI.
 
-    ```bash
-    cd ComfyUI/custom_nodes/
-    git clone https://github.com/rookiestar28/ComfyUI-Danbooru-Tags-Upsampler.git
-    ```
+### ComfyUI Manager
 
-2. **Install Dependencies**:
-    ComfyUI Manager is the recommended installation path because it installs node dependencies into the selected ComfyUI environment. For a manual clone, activate that same environment and run:
+Install the node pack through ComfyUI Manager, then restart ComfyUI. Manager normally installs `requirements.txt` into the selected ComfyUI environment.
 
-    ```bash
-    cd ComfyUI-Danbooru-Tags-Upsampler
-    python -m pip install -r requirements.txt
-    ```
+### Git Clone
 
-    The `requirements.txt` installs the node-specific runtime dependencies:
-    - `transformers`
-    - `optimum[onnxruntime]`
-    - `tokenizers`
-    - `sentencepiece`
+Clone the repository into the active ComfyUI installation's `custom_nodes` directory:
 
-    PyTorch is intentionally not pinned by this node because ComfyUI and ComfyUI Desktop manage their own `torch`, `torchvision`, and `torchaudio` builds for the selected device.
+```bash
+cd ComfyUI/custom_nodes
+git clone https://github.com/rookiestar28/ComfyUI-Danbooru-Tags-Upsampler.git
+```
 
-3. **Download Tag Files (if not included or if path needs adjustment)**:
-    This node relies on specific tag lists (e.g., `copyright.txt`, `character.txt`, `quality.txt`) for analyzing prompts. These files should be located in a `tags` directory within the `ComfyUI-Danbooru-Tags-Upsampler` custom node folder (i.e., `ComfyUI/custom_nodes/ComfyUI-Danbooru-Tags-Upsampler/tags/`).
-    If you have cloned the repository, these files should already be in place.
+Install dependencies with the Python interpreter used by that same ComfyUI installation:
 
-4. **Start/Restart ComfyUI**:
-    After installation, restart ComfyUI. The "Danbooru Tags Upsampler" node should appear under the "Prompt Styling/casual_gamer28" category.
+```bash
+cd ComfyUI-Danbooru-Tags-Upsampler
+python -m pip install -r requirements.txt
+```
 
-## Compatibility Evidence
+For Windows Portable, use its embedded interpreter instead of a global Python:
 
-The following matrix records the source-backed validation baseline reviewed on 2026-08-09. It is an evidence boundary, not a promise that every future host revision is compatible.
+```powershell
+python_embeded\python.exe -m pip install -r ComfyUI\custom_nodes\ComfyUI-Danbooru-Tags-Upsampler\requirements.txt
+```
 
-| Host surface | Reviewed tuple | Evidence scope |
+The node-specific dependencies are:
+
+- `transformers>=4.35.0`
+- `optimum[onnxruntime]>=1.16.0`
+- `tokenizers>=0.14.0`
+- `sentencepiece`
+
+`torch`, `torchvision`, and `torchaudio` are intentionally not installed or pinned by this node. They remain owned by the ComfyUI host so that its CPU/CUDA runtime is not replaced accidentally. The removed legacy `install.py` must not be restored or run.
+
+The required `tags/copyright.txt`, `tags/character.txt`, and `tags/quality.txt` resources are included in the repository. Restart ComfyUI after installation and confirm there are no custom-node import errors.
+
+## Quick Start
+
+1. Add **Danbooru Tags Upsampler** by searching for its name, or browse to **Prompt Styling → casual_gamer28**.
+2. Enter comma-separated tags in `prompt`, for example `1girl, solo`.
+3. Keep `dart-v1-sft` for the recommended starting model.
+4. Choose a backend and device. `ONNX (Quantized)` is the default backend; the device defaults to CUDA when available and CPU otherwise.
+5. Adjust the output-length and sampling controls as needed.
+6. Connect `upsampled_prompt` to `CLIPTextEncode` or another node that accepts a string.
+
+The canonical workflow node ID is `DanbooruTagsUpsampler`. Existing workflows serialized with `DanbooruTagsUpsamplerNodeRay` continue to load through the legacy compatibility mapping.
+
+## Input Reference
+
+| Input | Default / range | Behavior |
 | --- | --- | --- |
-| Current stable core | ComfyUI 0.31.0 with packaged frontend 1.48.7 | Package-style bootstrap, both node IDs, object-info-equivalent metadata, and network-free unit tests |
-| Standalone frontend schema | standalone frontend 1.50.3 | V1 input/help/search metadata is JSON serializable; no frontend bundle or V3-only entrypoint is shipped |
-| Current successor Desktop stable channel | Comfy Desktop 1.0.37 -> ComfyUI 0.31.0 -> packaged frontend 1.48.7 | The successor is channel-resolved: Desktop selects the current stable core, whose requirements select the packaged frontend |
-| Historical Desktop floor | Desktop 0.9.4 -> ComfyUI 0.22.3 -> frontend 1.43.18 | Metadata floor only; this archived Desktop source is not the current successor |
+| `prompt` | `1girl, solo` | Comma-separated input tags. The ComfyUI node appends generated tags to this prompt. |
+| `model_name` | `dart-v1-sft` | Selects one of the three allowlisted DART models below. |
+| `tag_length` | `long` | Relative DART length profile: `very short`, `short`, `long`, or `very long`. It is not an exact tag-count guarantee. |
+| `seed` | `0`; `0`–`4294967295` | Seeds generation. Exact reproducibility can still vary by backend, device, and dependency version. |
+| `temperature` | `1.0`; `0.01`–`5.0` | Sampling randomness. Higher values generally increase variation. |
+| `top_k` | `30`; `0`–`1000` | Restricts sampling to the highest-probability tokens. `0` disables the limit. |
+| `top_p` | `1.0`; `0.0`–`1.0` | Nucleus-sampling probability mass. |
+| `num_beams` | `1`; `1`–`20` | Beam-search width. Higher values cost more time and memory. |
+| `model_device` | CUDA if available, otherwise CPU | Requests `cpu` or `cuda`. A failed/unavailable CUDA request falls back to CPU and is reported in service metadata/logs. |
+| `model_backend` | `ONNX (Quantized)` | Requests `Original`, `ONNX`, or `ONNX (Quantized)`. Artifact availability may resolve the request to another backend as documented below. |
+| `max_new_tokens` | `128`; `8`–`512` | Maximum number of generated tokens. |
+| `negative_prompt_tags` | empty | Negative context used for CFG. Active CFG requires non-empty negative tags, `cfg_scale > 1.0`, and the Original backend. |
+| `ban_tags` | empty | Comma-separated tags or supported wildcard patterns to block on every backend. |
+| `cfg_scale` | `1.5`; `1.0`–`10.0` | CFG strength. ONNX rejects active CFG before heavy runtime construction. |
+| `debug_logging` | `false` | Enables additional detailed runtime logging. Current standard runtime logs may already include a truncated generated-output preview; do not process sensitive prompts without controlling log access. |
 
-The canonical node ID is `DanbooruTagsUpsampler`; the serialized legacy ID `DanbooruTagsUpsamplerNodeRay` remains mapped to the same implementation. No live model download, CUDA execution, or reference-repository execution was performed for this matrix. First use can download the selected pinned DART artifacts from Hugging Face.
+All numeric values must be finite and within these bounds. Invalid values fail with `invalid_request` instead of reaching the model runtime.
 
-### ComfyUI Desktop Notes
+## Models and Backends
 
-ComfyUI Desktop uses a managed Python environment and installs core packages with uv. During setup, Desktop asks for a ComfyUI files location, stored as `basePath` in Desktop's `config.json`; install this repository under that location's `custom_nodes` directory.
+### Models
 
-If the node-specific packages are missing, use Desktop or Manager's dependency reinstall flow instead of manually installing a separate PyTorch stack.
+| Model | Original | ONNX | Quantized ONNX | Remote tokenizer code |
+| --- | --- | --- | --- | --- |
+| [`dart-v1-sft`](https://huggingface.co/p1atdev/dart-v1-sft) | Yes | Yes | Yes | Reviewed and enabled only at the pinned revision |
+| [`dart-v2-sft`](https://huggingface.co/p1atdev/dart-v2-sft) | Yes | Falls back to quantized ONNX | Yes | Disabled |
+| [`dart-v2-moe-sft`](https://huggingface.co/p1atdev/dart-v2-moe-sft) | Yes | Falls back to Original | Falls back to Original | Disabled |
 
-For Desktop or non-CUDA systems, select `cpu` as `model_device`. Select `cuda` only when the Desktop environment has a compatible NVIDIA PyTorch runtime.
+### Backend capabilities
 
-## How to Use
+| Backend | Active CFG | Ban tags | Artifact and fallback behavior |
+| --- | --- | --- | --- |
+| `Original` | Supported | Supported | Loads the Transformers model artifact. |
+| `ONNX` | Rejected | Supported | Uses `model.onnx`; if unavailable, tries `model_quantized.onnx`, then Original. |
+| `ONNX (Quantized)` | Rejected | Supported | Uses `model_quantized.onnx`; if unavailable, falls back to Original. |
 
-1. In ComfyUI, right-click and select "Add Node" -> "Prompt Styling" -> "casual_gamer28" -> "Danbooru Tags Upsampler".
-2. Connect a text input (your base prompt, e.g., "1girl, solo") to the `prompt` input of the node.
-3. Adjust the parameters on the node as needed:
+ONNX inference is implemented with Hugging Face Optimum's [`ORTModelForCausalLM`](https://huggingface.co/docs/optimum-onnx/en/onnxruntime/package_reference/modeling_ort). A fallback is returned as a warning through the service result; integrations should inspect `requested_backend`, `resolved_backend`, `resolved_device`, `onnx_file_name`, and `warnings` rather than assuming the request was used unchanged.
 
-    - **`prompt`**: Your initial Danbooru tags or a simple description.
-    - **`model_name`**: Select the DART model version to use:
-        - `dart-v1-sft` - Stable version (Recommended, supports ONNX)
-        - `dart-v2-sft` - Improved version (supports ONNX)
-        - `dart-v2-moe-sft` - MoE architecture (Original backend only)
-    - **`tag_length`**: Desired total length of the final prompt after upsampling.
-        - `very short`: < 10 tags
-        - `short`: < 20 tags
-        - `long`: < 40 tags (recommended starting point)
-        - `very long`: > 40 tags
-    - **`seed`**: Seed for the tag generation process. The node accepts integer seeds from `0` through `4294967295`. Results can still vary across backends, devices, and dependency versions.
-    - **`temperature`**: Controls randomness. Higher values (e.g., 1.5-2.0) mean more diverse/surprising tags; lower values (e.g., 0.7-1.0) mean more predictable/conservative tags.
-    - **`top_k`**: Considers the k most likely tokens at each step.
-    - **`top_p`**: Nucleus sampling; considers the smallest set of tokens whose cumulative probability exceeds p.
-    - **`num_beams`**: Number of beams for beam search. `1` means no beam search. Higher values can lead to better quality but are slower.
-    - **`model_device`**: Choose "cpu" or "cuda" for the DART model.
-    - **`model_backend`**:
-        - `Original`: Standard Hugging Face Transformers model.
-        - `ONNX`: Optimized ONNX model (larger file size, potentially faster).
-        - `ONNX (Quantized)`: Quantized ONNX model (smallest file size, often fastest, slight quality trade-off).
-      If the selected model lacks the requested ONNX artifact, the service falls back to an available artifact/backend and records a warning. A failed CUDA initialization similarly falls back to CPU.
-    - **`max_new_tokens`**: Maximum number of new tags to be generated by the LLM.
-    - **`negative_prompt_tags` (Optional)**: Negative context for CFG on the Original backend. ONNX backends reject requests that activate CFG.
-    - **`ban_tags` (Optional)**: Comma-separated tags (or supported patterns with `*`) excluded from generated tags on every backend. Example: `official alternate costume, english text, * background`
-    - **`cfg_scale` (Optional)**: Classifier-Free Guidance scale for the Original backend. Values > 1.0 steer generation towards the main prompt and away from negative context.
-    - **`debug_logging` (Optional)**: Check this to enable more detailed logging in the console, useful for troubleshooting.
+## Compatibility and Verification
 
-4. The output `upsampled_prompt` can then be connected to a `CLIPTextEncode` node (or similar) for image generation.
+Package metadata declares:
 
-## Showcase / Examples
+- Python `>=3.10`
+- ComfyUI `>=0.22.3`
+- V1 custom-node loading through `NODE_CLASS_MAPPINGS`, as defined by the [ComfyUI node lifecycle](https://docs.comfy.org/custom-nodes/backend/lifecycle)
 
-The goal of this node is to enrich simple prompts. For example:
+The declared ComfyUI floor is a packaging compatibility boundary, not a claim that every historical host tuple received full live inference testing.
 
-- **Input Prompt**: `1girl, solo, cowboy shot`
-- **Upsampled Prompt (Example)**: `1girl, solo, cowboy shot, ahoge, animal ears, bare shoulders, blue hair, blush, closed mouth, collarbone, collared shirt, dress, eyelashes, fox ears, fox girl, fox tail, hair between eyes, heart, long hair, long sleeves, looking at viewer, neck ribbon, ribbon, shirt, simple background, sleeves past wrists, smile, tail, white background, white dress, white shirt, yellow eyes` (Actual output will vary based on seed and settings).
+The following source and runtime baseline was verified on 2026-08-09:
 
-For more visual examples, please refer to the [original sd-danbooru-tags-upsampler showcase](https://github.com/p1atdev/sd-danbooru-tags-upsampler#showcases), as the core generation mechanism is the same.
+| Surface | Reviewed tuple | Verification scope |
+| --- | --- | --- |
+| Current stable host | ComfyUI 0.31.0 with packaged frontend 1.48.7 | Live node discovery for both IDs; frozen input order/defaults; 15/15 tooltips; output/search metadata; pinned v1 Original and quantized-ONNX CPU inference |
+| Standalone frontend schema | standalone frontend 1.50.3 | Backend metadata remains JSON serializable; no frontend bundle or V3-only entrypoint is shipped |
+| Current Desktop stable channel | Comfy Desktop 1.0.37 → ComfyUI 0.31.0 → packaged frontend 1.48.7 | Source-reviewed, channel-resolved Desktop behavior plus the current-stable host validation above |
 
-## Model Access
+Desktop's stable channel is channel-resolved rather than a permanently frozen bundle, so a later Desktop installation may select a newer stable core. Treat the dated tuple above as validation evidence, not a permanent compatibility promise.
 
-This node supports multiple DART models from Hugging Face:
+No live model download occurs in routine automated tests. Separately authorized manual validation downloaded only the pinned v1 Original and quantized-ONNX artifacts and completed both CPU inference paths successfully. CUDA, non-quantized live ONNX inference, and Python 3.14 are not claimed as runtime-validated configurations.
 
-| Model | HuggingFace Link | ONNX Support |
-|-------|------------------|--------|
-| dart-v1-sft | [p1atdev/dart-v1-sft](https://huggingface.co/p1atdev/dart-v1-sft) | ✅ (Both) |
-| dart-v2-sft | [p1atdev/dart-v2-sft](https://huggingface.co/p1atdev/dart-v2-sft) | ✅ (Quantized only) |
-| dart-v2-moe-sft | [p1atdev/dart-v2-moe-sft](https://huggingface.co/p1atdev/dart-v2-moe-sft) | ❌ |
+## Model Downloads and Trust
 
-Models will be downloaded automatically on first use through Hugging Face Hub caching. The exact cache location depends on your operating system and Hugging Face environment variables such as `HF_HOME` or `HF_HUB_CACHE`.
+The selected model is downloaded from Hugging Face on first use and reused through the Hub cache. Hugging Face documents the default cache and the `HF_HOME` / `HF_HUB_CACHE` overrides in its [local cache guide](https://huggingface.co/docs/hub/local-cache).
 
-## Host Integration
+Supply-chain boundaries:
 
-This repository now exposes a structured service layer for external callers that want to reuse the upsampler without depending on the full ComfyUI node wrapper.
+- The selectable model names form a closed allowlist; callers cannot provide arbitrary repositories or revisions.
+- Model, tokenizer, and ONNX loads receive the approved immutable revision for the selected model.
+- `trust_remote_code=True` is limited to the reviewed `dart-v1-sft` tokenizer at its pinned revision.
+- V2 and V2 MoE use standard tokenizer loading with remote code disabled.
+- The node never installs packages at import time or runtime. This follows the [Comfy Registry security standard](https://docs.comfy.org/registry/standards), which prohibits subprocess-based runtime package installation.
 
-- Programmatic entry point: `danbooru_upsampler.service.upsample_prompt`
-- Toolbar helper: `danbooru_upsampler.service.build_toolbar_request`
-- Canonical node registry key: `DanbooruTagsUpsampler`
-- Legacy compatibility key remains available: `DanbooruTagsUpsamplerNodeRay`
+The exact pinned revisions are maintained in `danbooru_upsampler/dart/settings.py` and covered by regression tests. Review model and dependency changes before updating those pins.
 
-The service path is intended for host integrations such as editor-toolbar actions:
+## Host Integration API
 
-- success returns a structured result object with `final_prompt`, `generated_suffix`, and resolved runtime metadata,
-- invalid request/runtime/analyzer/generation failures raise typed exceptions, including malformed toolbar numeric inputs,
-- runtime cache access is guarded for background-thread delegation,
-- the default toolbar profile pins a conservative ONNX-quantized configuration rather than exposing the full node parameter surface immediately.
+External Python integrations can reuse the runtime without parsing ComfyUI node output strings:
 
-## For Developers / Troubleshooting
+```python
+from danbooru_upsampler.service import (
+    DanbooruUpsamplerRequest,
+    upsample_prompt,
+)
 
-- **Tags Directory**: The analyzer component loads classification tags from the `tags/` directory within this custom node's folder. Ensure this directory and its contents (`copyright.txt`, `character.txt`, `quality.txt`) are present.
-- **Dependencies**: This node depends on ComfyUI's host-managed PyTorch runtime. Do not install a separate `torch` build for this node unless you are intentionally repairing the host environment.
-- **Python and ComfyUI Versions**: Package metadata declares Python `>=3.10` and ComfyUI `>=0.22.3`. ComfyUI Desktop's managed Python environment is expected to satisfy this in current Desktop baselines.
-- **Escaping Brackets**: The handling of parentheses `()` and square brackets `[]` in prompts can be tricky. This node includes logic (from the original extension) to escape/unescape these, but their interaction with ComfyUI's CLIPTextEncode behavior should be observed. If you encounter issues with prompts containing brackets, this might be an area to investigate.
-- **Error Behavior**: External hosts should prefer the structured service API instead of parsing node output strings. The node wrapper now fails explicitly when the service reports runtime errors.
+result = upsample_prompt(
+    DanbooruUpsamplerRequest(
+        prompt="1girl, solo",
+        model_backend="ONNX (Quantized)",
+        model_device="cpu",
+    )
+)
+
+print(result.final_prompt)
+print(result.resolved_backend, result.resolved_device)
+```
+
+Available integration surfaces include:
+
+- `upsample_prompt()` for structured requests and results.
+- `build_toolbar_request()` for a conservative editor-toolbar profile.
+- `resolve_backend_capabilities()` and `resolve_runtime_selection()` for preflight behavior.
+- Frozen request/result/runtime dataclasses with resolved model revision, artifact, backend, device, and warnings.
+- Typed errors with stable codes: `invalid_request`, `unsupported_feature`, `runtime_initialization_failed`, `analyzer_failed`, and `generation_failed`.
+
+The runtime lock serializes shared model/tokenizer access. Analyzer resources are immutable and fingerprinted so repeated requests can reuse them safely while file changes invalidate the cache.
+
+## Troubleshooting
+
+### The node does not appear
+
+- Confirm the repository is directly under the active ComfyUI `custom_nodes` path.
+- Restart ComfyUI and inspect startup logs for an import error.
+- Verify the dependencies were installed with the same Python interpreter that launches ComfyUI, not a system Python.
+- Search for `Danbooru Tags Upsampler`, `danbooru`, or the legacy `Danbooru_Tags_Upsampler` wording.
+
+### Dependency or PyTorch conflicts
+
+Reinstall this node's requirements through ComfyUI Manager or the host environment. Do not install a separate PyTorch stack just for this node; use the version selected by ComfyUI/Desktop.
+
+### CUDA falls back to CPU
+
+The requested CUDA runtime was unavailable or failed initialization. Check the ComfyUI host's PyTorch/CUDA installation. The service result and logs report the resolved device.
+
+### ONNX reports `unsupported_feature`
+
+Active CFG is not supported on ONNX. Clear `negative_prompt_tags`, set `cfg_scale` to `1.0`, or use the Original backend. Ban tags remain supported on ONNX.
+
+### Model download or cache problems
+
+Confirm network access to the linked Hugging Face repositories and available disk space. If you override `HF_HOME` or `HF_HUB_CACHE`, ensure the ComfyUI process can read and write that location.
+
+### Missing or unreadable tag resources
+
+Restore `tags/copyright.txt`, `tags/character.txt`, and `tags/quality.txt` from the same repository revision. The analyzer intentionally fails instead of silently generating with incomplete classification data.
+
+### Parentheses or square brackets behave unexpectedly
+
+The port retains escape/unescape handling inherited from the original extension. Complex WebUI attention or LoRA syntax should be handled upstream; this node expects comma-separated Danbooru tags.
+
+## Development and Validation
+
+Use Python 3.10 or newer and install development tooling into a project-local environment. The deterministic repository gate is documented in `tests/TEST_SOP.md` and enforced in CI on Python 3.10 and 3.13.
+
+```powershell
+pre-commit run detect-secrets --all-files
+pre-commit run --all-files --show-diff-on-failure
+.venv\Scripts\python.exe -m compileall danbooru_upsampler __init__.py
+.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py" -v
+```
+
+This is a Python-only custom node with no `package.json`, browser bundle, or Playwright harness. Compile/import checks and the unit suite are the documented frontend-E2E replacement lane. Automated tests use fakes for model, ONNX, CUDA, and concurrency boundaries and must not download live models.
+
+Release safeguards include:
+
+- least-privilege, full-SHA-pinned CI and publishing workflows,
+- main/manual-only Registry publishing with PR secret isolation,
+- three-part semantic versioning in `pyproject.toml`,
+- `.comfyignore` plus regression checks that keep tests, workflows, internal records, ignored paths, and secrets out of the Registry runtime archive.
+
+The Comfy Registry uses semantic versions and immutable published versions; see the official [Registry overview](https://docs.comfy.org/registry/overview) and [publishing guide](https://docs.comfy.org/registry/publishing).
 
 ## Acknowledgements
 
-This work is a port and adaptation for ComfyUI. All credit for the original concept, model training, and core logic goes to **p1atdev**.
-Please see the original repository for full acknowledgements to other influential projects:
-[sd-danbooru-tags-upsampler Acknowledgements](https://github.com/p1atdev/sd-danbooru-tags-upsampler#acknowledgements)
+All credit for the original concept, model training, and core generation logic goes to **p1atdev**. See the original project's [acknowledgements](https://github.com/p1atdev/sd-danbooru-tags-upsampler#acknowledgements) for the broader list of influential work.
 
 ## License
 
-This repository is licensed under the Apache License 2.0. See the `LICENSE` file for the full license text.
+Licensed under the Apache License 2.0. See [`LICENSE`](LICENSE) for the full text.
