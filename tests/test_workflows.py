@@ -46,8 +46,8 @@ class WorkflowSecurityTests(unittest.TestCase):
 
     def test_every_workflow_action_is_pinned_to_reviewed_full_sha(self) -> None:
         expected_refs = {
-            "actions/checkout": "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
-            "actions/setup-python": "ece7cb06caefa5fff74198d8649806c4678c61a1",
+            "actions/checkout": "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",  # pragma: allowlist secret
+            "actions/setup-python": "ece7cb06caefa5fff74198d8649806c4678c61a1",  # pragma: allowlist secret
         }
         observed_actions: set[str] = set()
 
