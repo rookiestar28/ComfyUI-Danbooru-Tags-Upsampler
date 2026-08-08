@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from danbooru_upsampler.dart.settings import DART_MODELS
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback for local smoke only.
@@ -25,6 +27,32 @@ def _requirements() -> set[str]:
 
 @unittest.skipIf(tomllib is None, "tomllib is unavailable on this Python runtime")
 class PackageMetadataTests(unittest.TestCase):
+    def test_model_allowlist_uses_approved_revisions_and_scoped_remote_code(self) -> None:
+        expected = {
+            "dart-v1-sft": (
+                "dd5a3f34f3baa15b5266b5f5e2371a97c8ac7702",  # pragma: allowlist secret
+                True,
+            ),
+            "dart-v2-sft": (
+                "df62d486a9308fde0b4ddbf23742a18f7bc0b8e6",  # pragma: allowlist secret
+                False,
+            ),
+            "dart-v2-moe-sft": (
+                "167fdb177a6d68e2d4adca0be5f05d21f74e4d41",  # pragma: allowlist secret
+                False,
+            ),
+        }
+
+        self.assertEqual(set(DART_MODELS), set(expected))
+        for model_name, (revision, trust_remote_code) in expected.items():
+            model_info = DART_MODELS[model_name]
+            self.assertEqual(model_info["revision"], revision)
+            self.assertRegex(model_info["revision"], r"^[0-9a-f]{40}$")
+            self.assertIs(model_info["trust_remote_code"], trust_remote_code)
+
+    def test_legacy_host_mutating_installer_is_absent(self) -> None:
+        self.assertFalse((PROJECT_ROOT / "install.py").exists())
+
     def test_pyproject_dependencies_match_requirements_file(self) -> None:
         pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 

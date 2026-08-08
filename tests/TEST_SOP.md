@@ -35,7 +35,7 @@ python -m venv .venv
 ### 2. Import and syntax smoke
 
 ```powershell
-.venv\Scripts\python -m compileall danbooru_upsampler __init__.py install.py
+.venv\Scripts\python -m compileall danbooru_upsampler __init__.py
 ```
 
 ### 2b. Package-style import smoke

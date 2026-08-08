@@ -4,25 +4,35 @@ on:
   push:
     branches:
       - main
-      - master
     paths:
       - "pyproject.toml"
 
 permissions:
-  issues: write
+  contents: read
 
 jobs:
   publish-node:
     name: Publish Custom Node to registry
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: ${{ github.repository_owner == 'rookiestar28' }}
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          submodules: true
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.10"
+
+      - name: Install pinned Comfy CLI
+        run: python -m pip install comfy-cli==1.15.0
+
       - name: Publish Custom Node
-        uses: Comfy-Org/publish-node-action@v1
-        with:
-          ## Add your own personal access token to your Github Repository secrets and reference it here.
-          personal_access_token: ${{ secrets.REGISTRY_ACCESS_TOKEN }}
+        env:
+          COMFY_REGISTRY_TOKEN: ${{ secrets.REGISTRY_ACCESS_TOKEN }}
+        run: |
+          comfy --skip-prompt --no-enable-telemetry env
+          comfy node publish --token "$COMFY_REGISTRY_TOKEN"

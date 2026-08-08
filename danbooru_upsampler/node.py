@@ -25,6 +25,7 @@ class DanbooruTagsUpsamplerNode:
         "prompt upsampler",
         "anime tags",
         "dart",
+        "Danbooru_Tags_Upsampler",
     ]
 
     @classmethod
@@ -35,23 +36,91 @@ class DanbooruTagsUpsamplerNode:
 
         return {
             "required": {
-                "prompt": ("STRING", {"multiline": True, "default": "1girl, solo"}),
-                "model_name": (model_choices, {"default": DEFAULT_MODEL}),
-                "tag_length": (TAG_LENGTH_OPTIONS, {"default": "long"}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": SEED_MAX}),
-                "temperature": ("FLOAT", {"default": 1.0, "min": 0.01, "max": 5.0, "step": 0.01}),
-                "top_k": ("INT", {"default": 30, "min": 0, "max": 1000, "step": 1}),
-                "top_p": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "num_beams": ("INT", {"default": 1, "min": 1, "max": 20, "step": 1}),
-                "model_device": (["cpu", "cuda"], {"default": "cuda" if torch.cuda.is_available() else "cpu"}),
-                "model_backend": (backend_choices, {"default": default_backend}),
-                "max_new_tokens": ("INT", {"default": 128, "min": 8, "max": 512, "step": 8}),
+                "prompt": ("STRING", {
+                    "multiline": True,
+                    "default": "1girl, solo",
+                    "tooltip": "Comma-separated Danbooru tags to analyze and expand.",
+                }),
+                "model_name": (model_choices, {
+                    "default": DEFAULT_MODEL,
+                    "tooltip": "Allowlisted DART model. Model files use a pinned revision and may download on first use.",
+                }),
+                "tag_length": (TAG_LENGTH_OPTIONS, {
+                    "default": "long",
+                    "tooltip": "Target amount of detail requested from the DART model.",
+                }),
+                "seed": ("INT", {
+                    "default": 0,
+                    "min": 0,
+                    "max": SEED_MAX,
+                    "tooltip": "Generation seed. Reproducibility can still vary across backends, devices, and library versions.",
+                }),
+                "temperature": ("FLOAT", {
+                    "default": 1.0,
+                    "min": 0.01,
+                    "max": 5.0,
+                    "step": 0.01,
+                    "tooltip": "Sampling randomness; higher values produce more varied tag choices.",
+                }),
+                "top_k": ("INT", {
+                    "default": 30,
+                    "min": 0,
+                    "max": 1000,
+                    "step": 1,
+                    "tooltip": "Limits sampling to the highest-probability tokens; 0 disables this limit.",
+                }),
+                "top_p": ("FLOAT", {
+                    "default": 1.0,
+                    "min": 0.0,
+                    "max": 1.0,
+                    "step": 0.01,
+                    "tooltip": "Nucleus-sampling probability mass; 1.0 keeps the full distribution.",
+                }),
+                "num_beams": ("INT", {
+                    "default": 1,
+                    "min": 1,
+                    "max": 20,
+                    "step": 1,
+                    "tooltip": "Beam-search width. Larger values use more time and memory.",
+                }),
+                "model_device": (["cpu", "cuda"], {
+                    "default": "cuda" if torch.cuda.is_available() else "cpu",
+                    "tooltip": "Requested execution device. Failed CUDA initialization falls back to CPU and is logged.",
+                }),
+                "model_backend": (backend_choices, {
+                    "default": default_backend,
+                    "tooltip": "Original supports CFG. ONNX variants enforce ban tags but reject CFG; unavailable artifacts fall back with a warning.",
+                }),
+                "max_new_tokens": ("INT", {
+                    "default": 128,
+                    "min": 8,
+                    "max": 512,
+                    "step": 8,
+                    "tooltip": "Maximum number of new tokens generated for the tag completion.",
+                }),
             },
             "optional": {
-                "negative_prompt_tags": ("STRING", {"multiline": True, "default": ""}),
-                "ban_tags": ("STRING", {"multiline": False, "default": ""}),
-                "cfg_scale": ("FLOAT", {"default": 1.5, "min": 1.0, "max": 10.0, "step": 0.1}),
-                "debug_logging": ("BOOLEAN", {"default": False}),
+                "negative_prompt_tags": ("STRING", {
+                    "multiline": True,
+                    "default": "",
+                    "tooltip": "Tags used for CFG with the Original backend. ONNX rejects CFG requests.",
+                }),
+                "ban_tags": ("STRING", {
+                    "multiline": False,
+                    "default": "",
+                    "tooltip": "Comma-separated tags or supported wildcard patterns to block on every backend.",
+                }),
+                "cfg_scale": ("FLOAT", {
+                    "default": 1.5,
+                    "min": 1.0,
+                    "max": 10.0,
+                    "step": 0.1,
+                    "tooltip": "Classifier-free guidance strength for negative tags; supported only by Original.",
+                }),
+                "debug_logging": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Enable detailed node/runtime logs for troubleshooting.",
+                }),
             }
         }
 
@@ -102,6 +171,6 @@ NODE_CLASS_MAPPINGS = {
     "DanbooruTagsUpsamplerNodeRay": DanbooruTagsUpsamplerNode,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "DanbooruTagsUpsampler": "Danbooru_Tags_Upsampler",
-    "DanbooruTagsUpsamplerNodeRay": "Danbooru_Tags_Upsampler"
+    "DanbooruTagsUpsampler": "Danbooru Tags Upsampler",
+    "DanbooruTagsUpsamplerNodeRay": "Danbooru Tags Upsampler"
 }

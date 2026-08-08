@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,6 +38,11 @@ class DanbooruUpsamplerInvalidRequestError(DanbooruUpsamplerError):
         super().__init__(message, code="invalid_request")
 
 
+class DanbooruUpsamplerUnsupportedFeatureError(DanbooruUpsamplerError):
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code="unsupported_feature")
+
+
 class DanbooruUpsamplerRuntimeInitializationError(DanbooruUpsamplerError):
     def __init__(self, message: str) -> None:
         super().__init__(message, code="runtime_initialization_failed")
@@ -50,6 +56,15 @@ class DanbooruUpsamplerAnalyzerError(DanbooruUpsamplerError):
 class DanbooruUpsamplerGenerationError(DanbooruUpsamplerError):
     def __init__(self, message: str) -> None:
         super().__init__(message, code="generation_failed")
+
+
+@dataclass(frozen=True)
+class DanbooruBackendCapabilities:
+    backend: str
+    supports_cfg: bool
+    supports_ban_tags: bool
+    supported_devices: tuple[str, ...]
+    supports_artifact_fallback: bool
 
 
 @dataclass(frozen=True)
@@ -99,6 +114,8 @@ class DanbooruUpsamplerRequest:
 class DanbooruUpsamplerResolvedRuntime:
     model_name: str
     model_repo: str
+    model_revision: str
+    trust_remote_code: bool
     requested_backend: str
     resolved_backend: str
     resolved_device: str
@@ -117,6 +134,7 @@ class DanbooruUpsamplerResult:
     resolved_device: str
     tag_length: str
     onnx_file_name: str | None = None
+    model_revision: str | None = None
     warnings: tuple[str, ...] = ()
 
 
@@ -140,6 +158,18 @@ def _validate_backend(model_backend: str) -> str:
         return normalized
     raise DanbooruUpsamplerInvalidRequestError(
         "model_backend must match one of the shipped backend options."
+    )
+
+
+def resolve_backend_capabilities(model_backend: str) -> DanbooruBackendCapabilities:
+    backend = _validate_backend(model_backend)
+    is_original = backend == MODEL_BACKEND_TYPE.get("ORIGINAL", "Original")
+    return DanbooruBackendCapabilities(
+        backend=backend,
+        supports_cfg=is_original,
+        supports_ban_tags=True,
+        supported_devices=("cpu", "cuda"),
+        supports_artifact_fallback=True,
     )
 
 
@@ -168,6 +198,40 @@ def _coerce_float(value: object, *, field_name: str) -> float:
         raise DanbooruUpsamplerInvalidRequestError(
             f"{field_name} must be a float-compatible value."
         ) from exc
+
+
+def _validate_int_range(
+    value: object,
+    *,
+    field_name: str,
+    minimum: int,
+    maximum: int,
+) -> int:
+    normalized = _coerce_int(value, field_name=field_name)
+    if normalized < minimum or normalized > maximum:
+        raise DanbooruUpsamplerInvalidRequestError(
+            f"{field_name} must be between {minimum} and {maximum}, inclusive."
+        )
+    return normalized
+
+
+def _validate_float_range(
+    value: object,
+    *,
+    field_name: str,
+    minimum: float,
+    maximum: float,
+) -> float:
+    normalized = _coerce_float(value, field_name=field_name)
+    if not math.isfinite(normalized):
+        raise DanbooruUpsamplerInvalidRequestError(
+            f"{field_name} must be a finite number."
+        )
+    if normalized < minimum or normalized > maximum:
+        raise DanbooruUpsamplerInvalidRequestError(
+            f"{field_name} must be between {minimum} and {maximum}, inclusive."
+        )
+    return normalized
 
 
 def resolve_runtime_selection(
@@ -216,6 +280,8 @@ def resolve_runtime_selection(
     return DanbooruUpsamplerResolvedRuntime(
         model_name=normalized_model_name,
         model_repo=str(model_info.get("repo", "")).strip(),
+        model_revision=str(model_info["revision"]),
+        trust_remote_code=bool(model_info["trust_remote_code"]),
         requested_backend=requested_backend,
         resolved_backend=resolved_backend,
         resolved_device=resolved_device,
@@ -287,21 +353,65 @@ def upsample_prompt(
     normalized_prompt = str(request.prompt or "").strip()
     tag_length = _validate_tag_length(request.tag_length)
     # IMPORTANT: validate host-facing numeric inputs before runtime construction; external callers rely on typed invalid_request failures instead of raw cast errors.
-    normalized_cfg_scale = _coerce_float(request.cfg_scale, field_name="cfg_scale")
-    normalized_seed = _coerce_int(request.seed, field_name="seed")
-    normalized_max_new_tokens = _coerce_int(
+    normalized_cfg_scale = _validate_float_range(
+        request.cfg_scale,
+        field_name="cfg_scale",
+        minimum=1.0,
+        maximum=10.0,
+    )
+    normalized_seed = _validate_int_range(
+        request.seed,
+        field_name="seed",
+        minimum=0,
+        maximum=SEED_MAX,
+    )
+    normalized_max_new_tokens = _validate_int_range(
         request.max_new_tokens,
         field_name="max_new_tokens",
+        minimum=8,
+        maximum=512,
     )
-    normalized_temperature = _coerce_float(request.temperature, field_name="temperature")
-    normalized_top_p = _coerce_float(request.top_p, field_name="top_p")
-    normalized_top_k = _coerce_int(request.top_k, field_name="top_k")
-    normalized_num_beams = _coerce_int(request.num_beams, field_name="num_beams")
+    normalized_temperature = _validate_float_range(
+        request.temperature,
+        field_name="temperature",
+        minimum=0.01,
+        maximum=5.0,
+    )
+    normalized_top_p = _validate_float_range(
+        request.top_p,
+        field_name="top_p",
+        minimum=0.0,
+        maximum=1.0,
+    )
+    normalized_top_k = _validate_int_range(
+        request.top_k,
+        field_name="top_k",
+        minimum=0,
+        maximum=1000,
+    )
+    normalized_num_beams = _validate_int_range(
+        request.num_beams,
+        field_name="num_beams",
+        minimum=1,
+        maximum=20,
+    )
     runtime = resolve_runtime_selection(
         model_name=request.model_name,
         model_backend=request.model_backend,
         model_device=request.model_device,
     )
+    capabilities = resolve_backend_capabilities(runtime.resolved_backend)
+    negative_prompt_tags = str(request.negative_prompt_tags or "").strip()
+    if negative_prompt_tags and normalized_cfg_scale > 1.0 and not capabilities.supports_cfg:
+        # IMPORTANT: unsupported host features must fail before heavy runtime construction; silent no-ops produce misleading workflows.
+        raise DanbooruUpsamplerUnsupportedFeatureError(
+            f"CFG is not supported by backend '{runtime.resolved_backend}'. "
+            "Use the Original backend or clear negative_prompt_tags."
+        )
+    if str(request.ban_tags or "").strip() and not capabilities.supports_ban_tags:
+        raise DanbooruUpsamplerUnsupportedFeatureError(
+            f"Ban tags are not supported by backend '{runtime.resolved_backend}'."
+        )
 
     generator = DartGenerator(
         model_name=runtime.model_repo,
@@ -309,13 +419,24 @@ def upsample_prompt(
         model_backend=runtime.resolved_backend,
         model_device=runtime.resolved_device,
         debug_logging=bool(request.debug_logging),
+        model_revision=runtime.model_revision,
+        tokenizer_trust_remote_code=runtime.trust_remote_code,
         onnx_file_name=runtime.onnx_file_name,
     )
+    actual_device = runtime.resolved_device
+    result_warnings = list(runtime.warnings)
 
     with generator.runtime_guard():
         try:
             generator.load_model_if_needed()
             generator.load_tokenizer_if_needed()
+            reported_device = str(generator.get_actual_device()).strip().lower().split(":", 1)[0]
+            if reported_device in ("cpu", "cuda"):
+                actual_device = reported_device
+            if actual_device != runtime.resolved_device:
+                result_warnings.append(
+                    f"Requested runtime device '{runtime.resolved_device}' fell back to '{actual_device}'."
+                )
         except Exception as exc:
             raise DanbooruUpsamplerRuntimeInitializationError(
                 f"Failed to initialize DART runtime: {exc}"
@@ -338,7 +459,6 @@ def upsample_prompt(
         try:
             positive_result = analyzer.analyze(normalized_prompt)
             negative_result: ImagePromptAnalyzingResult | None = None
-            negative_prompt_tags = str(request.negative_prompt_tags or "").strip()
             if negative_prompt_tags and normalized_cfg_scale > 1.0:
                 negative_result = analyzer.analyze(negative_prompt_tags)
         except Exception as exc:
@@ -401,8 +521,9 @@ def upsample_prompt(
         model_repo=runtime.model_repo,
         requested_backend=runtime.requested_backend,
         resolved_backend=runtime.resolved_backend,
-        resolved_device=runtime.resolved_device,
+        resolved_device=actual_device,
         tag_length=tag_length,
         onnx_file_name=runtime.onnx_file_name,
-        warnings=runtime.warnings,
+        model_revision=runtime.model_revision,
+        warnings=tuple(result_warnings),
     )

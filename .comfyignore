@@ -1,0 +1,22 @@
+# Registry archives contain only runtime and user-facing files.
+.comfyignore
+.gitignore
+.github/
+.pre-commit-config.yaml
+tests/
+AGENTS.md
+ROADMAP.md
+
+# Internal/local evidence is denied even though repository .gitignore already excludes it.
+.planning/
+reference/
+.sessions/
+
+# Local environments, caches, and generated output.
+.venv/
+.venv-*/
+.tmp/
+__pycache__/
+*.py[cod]
+build/
+dist/

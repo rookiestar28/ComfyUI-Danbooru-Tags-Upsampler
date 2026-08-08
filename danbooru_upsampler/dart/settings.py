@@ -1,5 +1,5 @@
 import logging
-from typing import Literal, Any # Literal 和 Any 可能仍然有用，如果 DEFAULT_VALUES 被保留並在別處引用
+from typing import Literal, Any, TypedDict # Literal 和 Any 可能仍然有用，如果 DEFAULT_VALUES 被保留並在別處引用
 
 logger = logging.getLogger(__name__)
 
@@ -13,21 +13,36 @@ MODEL_BACKEND_TYPE: dict[str, str] = {
 # 可用的 DART 模型列表 (依版本排序)
 # 所有模型皆使用相同推論代碼 (AutoModelForCausalLM)
 # onnx_files: 可用的 ONNX 檔案類型 ("model.onnx", "model_quantized.onnx")
-DART_MODELS: dict[str, dict] = {
+class DartModelConfig(TypedDict):
+    repo: str
+    revision: str
+    trust_remote_code: bool
+    description: str
+    supports_onnx: bool
+    onnx_files: list[str]
+
+
+DART_MODELS: dict[str, DartModelConfig] = {
     "dart-v1-sft": {
         "repo": "p1atdev/dart-v1-sft",
+        "revision": "dd5a3f34f3baa15b5266b5f5e2371a97c8ac7702",  # pragma: allowlist secret
+        "trust_remote_code": True,
         "description": "V1 SFT - 穩定版本 (推薦)",
         "supports_onnx": True,
         "onnx_files": ["model.onnx", "model_quantized.onnx"],
     },
     "dart-v2-sft": {
         "repo": "p1atdev/dart-v2-sft",
+        "revision": "df62d486a9308fde0b4ddbf23742a18f7bc0b8e6",  # pragma: allowlist secret
+        "trust_remote_code": False,
         "description": "V2 SFT - 改進版本",
         "supports_onnx": True,
         "onnx_files": ["model_quantized.onnx"],  # 只有 quantized 版本
     },
     "dart-v2-moe-sft": {
         "repo": "p1atdev/dart-v2-moe-sft",
+        "revision": "167fdb177a6d68e2d4adca0be5f05d21f74e4d41",  # pragma: allowlist secret
+        "trust_remote_code": False,
         "description": "V2 MoE SFT - 專家混合架構",
         "supports_onnx": False,
         "onnx_files": [],

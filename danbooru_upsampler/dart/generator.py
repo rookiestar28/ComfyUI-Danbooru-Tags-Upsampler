@@ -36,15 +36,26 @@ class DartGenerator:
     """A class for generating danbooru tags"""
 
     # Class-level cache for models and tokenizers (支援多模型切換)
-    # Key: (model_name, backend) -> model
-    _model_cache: dict[tuple[str, str], PreTrainedModel | ORTModelForCausalLM] = {}
-    # Key: model_name -> tokenizer
-    _tokenizer_cache: dict[str, PreTrainedTokenizer | PreTrainedTokenizerFast] = {}
+    # Key: (model_name, approved_revision, backend, requested_device, ONNX artifact) -> model
+    _model_cache: dict[
+        tuple[str, str | None, str, str, str | None],
+        PreTrainedModel | ORTModelForCausalLM,
+    ] = {}
+    # Requested runtime identity -> effective cache identity after provider/device fallback.
+    _model_resolution_cache: dict[
+        tuple[str, str | None, str, str, str | None],
+        tuple[str, str | None, str, str, str | None],
+    ] = {}
+    # Key: (tokenizer_name, approved_revision, scoped_remote_code_trust) -> tokenizer
+    _tokenizer_cache: dict[
+        tuple[str, str | None, bool],
+        PreTrainedTokenizer | PreTrainedTokenizerFast,
+    ] = {}
     # 當前使用的模型和分詞器
     dart_model: PreTrainedModel | ORTModelForCausalLM | None = None
     dart_tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast | None = None
-    _current_model_key: tuple[str, str] | None = None
-    _current_tokenizer_key: str | None = None
+    _current_model_key: tuple[str, str | None, str, str, str | None] | None = None
+    _current_tokenizer_key: tuple[str, str | None, bool] | None = None
     # CRITICAL: guard the shared class-level model/tokenizer cache; host integrations may call this runtime from worker threads.
     _runtime_lock = threading.RLock()
 
@@ -55,6 +66,8 @@ class DartGenerator:
         model_backend: str,
         model_device: str = "cpu",
         debug_logging: bool = False,
+        model_revision: str | None = None,
+        tokenizer_trust_remote_code: bool = False,
         onnx_file_name: str | None = None,  # 新增：ONNX 檔案名稱
     ):
         self.model_name = model_name
@@ -74,6 +87,8 @@ class DartGenerator:
 
         self.model_backend = model_backend
         self.model_device = model_device
+        self.model_revision = model_revision
+        self.tokenizer_trust_remote_code = tokenizer_trust_remote_code
         self.onnx_file_name = onnx_file_name  # 儲存 ONNX 檔案名稱
 
         if debug_logging:
@@ -88,12 +103,58 @@ class DartGenerator:
         with DartGenerator._runtime_lock:
             yield
 
+    def _model_cache_key(
+        self,
+        *,
+        device: str | None = None,
+    ) -> tuple[str, str | None, str, str, str | None]:
+        return (
+            self.model_name,
+            self.model_revision,
+            self.model_backend,
+            self.model_device if device is None else device,
+            self.onnx_file_name,
+        )
+
+    def _tokenizer_cache_key(self) -> tuple[str, str | None, bool]:
+        return (
+            self.tokenizer_name,
+            self.model_revision,
+            self.tokenizer_trust_remote_code,
+        )
+
+    def get_actual_device(self) -> str:
+        model = DartGenerator.dart_model
+        if model is None:
+            return self.model_device
+
+        # IMPORTANT: ONNX Runtime providers are the execution truth; wrapper device fields can be stale.
+        session = getattr(model, "model", None)
+        get_providers = getattr(session, "get_providers", None)
+        if callable(get_providers):
+            providers = tuple(str(provider) for provider in get_providers())
+            if "CUDAExecutionProvider" in providers:
+                return "cuda"
+            if "CPUExecutionProvider" in providers:
+                return "cpu"
+
+        device = getattr(model, "device", None)
+        if device is not None:
+            normalized = str(device).strip().lower().split(":", 1)[0]
+            if normalized in ("cpu", "cuda"):
+                return normalized
+
+        return self.model_device
+
     def _load_dart_model(self):
         logger.debug(f"Loading DART model: {self.model_name} with backend: {self.model_backend}")
         is_onnx = False
 
         if self.model_backend == MODEL_BACKEND_TYPE.get("ORIGINAL", "original"):
-            DartGenerator.dart_model = AutoModelForCausalLM.from_pretrained(self.model_name)
+            DartGenerator.dart_model = AutoModelForCausalLM.from_pretrained(
+                self.model_name,
+                revision=self.model_revision,
+            )
         elif self.model_backend in [MODEL_BACKEND_TYPE.get("ONNX", "ONNX"), MODEL_BACKEND_TYPE.get("ONNX_QUANTIZED", "ONNX (Quantized)")]:
             # 使用傳入的 onnx_file_name 或預設值
             file_name = self.onnx_file_name
@@ -103,6 +164,7 @@ class DartGenerator:
             DartGenerator.dart_model = ORTModelForCausalLM.from_pretrained(
                 self.model_name,
                 file_name=file_name,
+                revision=self.model_revision,
             )
             is_onnx = True
         else:
@@ -138,46 +200,63 @@ class DartGenerator:
         logger.debug(f"Loading DART tokenizer: {self.tokenizer_name}")
         # Ensure the class variable is updated
         DartGenerator.dart_tokenizer = AutoTokenizer.from_pretrained(
-            self.tokenizer_name, trust_remote_code=True # trust_remote_code might be needed depending on the model
+            self.tokenizer_name,
+            revision=self.model_revision,
+            trust_remote_code=self.tokenizer_trust_remote_code,
         )
         assert DartGenerator.dart_tokenizer is not None, "Failed to load DART tokenizer"
         logger.info(f"DART tokenizer '{self.tokenizer_name}' loaded.")
 
     def _check_model_available(self) -> bool:
         """檢查當前請求的模型是否已載入"""
-        cache_key = (self.model_name, self.model_backend)
-        return cache_key == DartGenerator._current_model_key and DartGenerator.dart_model is not None
+        requested_key = self._model_cache_key()
+        effective_key = DartGenerator._model_resolution_cache.get(requested_key, requested_key)
+        return effective_key == DartGenerator._current_model_key and DartGenerator.dart_model is not None
 
     def _check_tokenizer_available(self) -> bool:
         """檢查當前請求的分詞器是否已載入"""
-        return self.tokenizer_name == DartGenerator._current_tokenizer_key and DartGenerator.dart_tokenizer is not None
+        return self._tokenizer_cache_key() == DartGenerator._current_tokenizer_key and DartGenerator.dart_tokenizer is not None
 
     def load_model_if_needed(self):
         """載入模型，支援模型切換"""
-        cache_key = (self.model_name, self.model_backend)
+        requested_key = self._model_cache_key()
         with self.runtime_guard():
-            if cache_key != DartGenerator._current_model_key:
-                if cache_key in DartGenerator._model_cache:
-                    DartGenerator.dart_model = DartGenerator._model_cache[cache_key]
-                    DartGenerator._current_model_key = cache_key
+            effective_key = DartGenerator._model_resolution_cache.get(
+                requested_key,
+                requested_key,
+            )
+            if (
+                effective_key != DartGenerator._current_model_key
+                or DartGenerator.dart_model is None
+            ):
+                if effective_key in DartGenerator._model_cache:
+                    DartGenerator.dart_model = DartGenerator._model_cache[effective_key]
+                    DartGenerator._current_model_key = effective_key
                     logger.info(f"Switched to cached model: {self.model_name} ({self.model_backend})")
                 else:
                     self._load_dart_model()
-                    DartGenerator._model_cache[cache_key] = DartGenerator.dart_model  # type: ignore
-                    DartGenerator._current_model_key = cache_key
+                    actual_device = self.get_actual_device()
+                    effective_key = self._model_cache_key(device=actual_device)
+                    DartGenerator._model_cache[effective_key] = DartGenerator.dart_model  # type: ignore
+                    DartGenerator._model_resolution_cache[requested_key] = effective_key
+                    DartGenerator._current_model_key = effective_key
 
     def load_tokenizer_if_needed(self):
         """載入分詞器，支援切換"""
+        cache_key = self._tokenizer_cache_key()
         with self.runtime_guard():
-            if self.tokenizer_name != DartGenerator._current_tokenizer_key:
-                if self.tokenizer_name in DartGenerator._tokenizer_cache:
-                    DartGenerator.dart_tokenizer = DartGenerator._tokenizer_cache[self.tokenizer_name]
-                    DartGenerator._current_tokenizer_key = self.tokenizer_name
+            if (
+                cache_key != DartGenerator._current_tokenizer_key
+                or DartGenerator.dart_tokenizer is None
+            ):
+                if cache_key in DartGenerator._tokenizer_cache:
+                    DartGenerator.dart_tokenizer = DartGenerator._tokenizer_cache[cache_key]
+                    DartGenerator._current_tokenizer_key = cache_key
                     logger.info(f"Switched to cached tokenizer: {self.tokenizer_name}")
                 else:
                     self._load_dart_tokenizer()
-                    DartGenerator._tokenizer_cache[self.tokenizer_name] = DartGenerator.dart_tokenizer  # type: ignore
-                    DartGenerator._current_tokenizer_key = self.tokenizer_name
+                    DartGenerator._tokenizer_cache[cache_key] = DartGenerator.dart_tokenizer  # type: ignore
+                    DartGenerator._current_tokenizer_key = cache_key
 
     def get_vocab_list(self) -> list[str]:
         with self.runtime_guard():
@@ -299,7 +378,8 @@ class DartGenerator:
 
             if negative_prompt_ids_tensor is not None and cfg_scale > 1.0:
                 if is_onnx_backend:
-                    logger.warning("CFG (Classifier-Free Guidance) is not supported with ONNX backend. Skipping CFG.")
+                    # IMPORTANT: never silently ignore a requested generation control; callers must receive a deterministic failure.
+                    raise ValueError("CFG is not supported with ONNX backends.")
                 else:
                     logits_processor = LogitsProcessorList(
                         [
@@ -323,6 +403,7 @@ class DartGenerator:
                         top_p=top_p if do_sample else 1.0,
                         top_k=top_k if do_sample else 0,
                         num_beams=num_beams,
+                        bad_words_ids=bad_words_ids,
                         pad_token_id=DartGenerator.dart_tokenizer.eos_token_id,
                     )
                 else:

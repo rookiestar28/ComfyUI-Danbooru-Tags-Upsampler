@@ -10,6 +10,7 @@ This project is a port and adaptation of the [sd-danbooru-tags-upsampler](https:
 - Declares `requires-python = ">=3.10"` and `requires-comfyui = ">=0.22.3"` in `pyproject.toml`.
 - Exposes frontend discovery metadata through `DESCRIPTION`, `SEARCH_ALIASES`, and `OUTPUT_TOOLTIPS`.
 - Does not pin `torch`, `torchvision`, or `torchaudio`; those packages are managed by the ComfyUI host environment.
+- Pins every supported DART model to an audited immutable revision; remote tokenizer code is enabled only for the reviewed v1 tokenizer.
 
 ## Features
 
@@ -23,10 +24,10 @@ This project is a port and adaptation of the [sd-danbooru-tags-upsampler](https:
   - Generation parameters like temperature, top_k, top_p, and number of beams.
   - Banning specific tags from appearing in the upsampled results.
   - Seed for reproducible upsampling.
-- **Classifier-Free Guidance (CFG) Support**: Optionally provide negative prompt tags to guide the generation process further.
+- **Classifier-Free Guidance (CFG) Support**: The Original backend supports negative prompt tags. ONNX backends reject CFG requests instead of silently ignoring them.
 - **Multiple Model Backends**: Supports original Hugging Face Transformers, ONNX, and Quantized ONNX backends for the DART model, allowing for a balance between speed and resource usage.
-- **Device Selection**: Run the upsampling model on either CPU or CUDA-enabled GPU.
-- **Smart Model Caching**: Models are cached in memory for fast switching between different versions.
+- **Device Selection**: Request CPU or CUDA. If CUDA initialization fails, the runtime falls back to CPU and records/logs the actual device.
+- **Smart Model Caching**: Models and tokenizers are cached by immutable revision, backend, artifact, device request, and tokenizer trust policy.
 - **Host Integration Ready**: Exposes a structured Python service seam for external callers that need clean results, canonical node detection, and toolbar-friendly defaults.
 
 ## Installation
@@ -40,22 +41,12 @@ This project is a port and adaptation of the [sd-danbooru-tags-upsampler](https:
     ```
 
 2. **Install Dependencies**:
-    Navigate into the cloned directory and install the required Python packages.
-    - **Method 1: Using `install.py`**
-        The repository includes an `install.py` script that installs `requirements.txt` with the active Python interpreter. Run it from the custom node directory with your ComfyUI Python environment active:
+    ComfyUI Manager is the recommended installation path because it installs node dependencies into the selected ComfyUI environment. For a manual clone, activate that same environment and run:
 
-        ```bash
-        cd ComfyUI-Danbooru-Tags-Upsampler
-        python install.py
-        ```
-
-    - **Method 2: Manual Installation via pip**
-        If you prefer manual control, activate your ComfyUI's Python environment and run:
-
-        ```bash
-        cd ComfyUI-Danbooru-Tags-Upsampler
-        pip install -r requirements.txt
-        ```
+    ```bash
+    cd ComfyUI-Danbooru-Tags-Upsampler
+    python -m pip install -r requirements.txt
+    ```
 
     The `requirements.txt` installs the node-specific runtime dependencies:
     - `transformers`
@@ -72,6 +63,19 @@ This project is a port and adaptation of the [sd-danbooru-tags-upsampler](https:
 4. **Start/Restart ComfyUI**:
     After installation, restart ComfyUI. The "Danbooru Tags Upsampler" node should appear under the "Prompt Styling/casual_gamer28" category.
 
+## Compatibility Evidence
+
+The following matrix records the source-backed validation baseline reviewed on 2026-08-09. It is an evidence boundary, not a promise that every future host revision is compatible.
+
+| Host surface | Reviewed tuple | Evidence scope |
+| --- | --- | --- |
+| Current stable core | ComfyUI 0.31.0 with packaged frontend 1.48.7 | Package-style bootstrap, both node IDs, object-info-equivalent metadata, and network-free unit tests |
+| Standalone frontend schema | standalone frontend 1.50.3 | V1 input/help/search metadata is JSON serializable; no frontend bundle or V3-only entrypoint is shipped |
+| Current successor Desktop stable channel | Comfy Desktop 1.0.37 -> ComfyUI 0.31.0 -> packaged frontend 1.48.7 | The successor is channel-resolved: Desktop selects the current stable core, whose requirements select the packaged frontend |
+| Historical Desktop floor | Desktop 0.9.4 -> ComfyUI 0.22.3 -> frontend 1.43.18 | Metadata floor only; this archived Desktop source is not the current successor |
+
+The canonical node ID is `DanbooruTagsUpsampler`; the serialized legacy ID `DanbooruTagsUpsamplerNodeRay` remains mapped to the same implementation. No live model download, CUDA execution, or reference-repository execution was performed for this matrix. First use can download the selected pinned DART artifacts from Hugging Face.
+
 ### ComfyUI Desktop Notes
 
 ComfyUI Desktop uses a managed Python environment and installs core packages with uv. During setup, Desktop asks for a ComfyUI files location, stored as `basePath` in Desktop's `config.json`; install this repository under that location's `custom_nodes` directory.
@@ -82,7 +86,7 @@ For Desktop or non-CUDA systems, select `cpu` as `model_device`. Select `cuda` o
 
 ## How to Use
 
-1. In ComfyUI, right-click and select "Add Node" -> "Prompt Styling" -> "casual_gamer28" -> "Danbooru_Tags_Upsampler".
+1. In ComfyUI, right-click and select "Add Node" -> "Prompt Styling" -> "casual_gamer28" -> "Danbooru Tags Upsampler".
 2. Connect a text input (your base prompt, e.g., "1girl, solo") to the `prompt` input of the node.
 3. Adjust the parameters on the node as needed:
 
@@ -96,7 +100,7 @@ For Desktop or non-CUDA systems, select `cpu` as `model_device`. Select `cuda` o
         - `short`: < 20 tags
         - `long`: < 40 tags (recommended starting point)
         - `very long`: > 40 tags
-    - **`seed`**: Seed for the tag generation process. The node accepts integer seeds from `0` through `4294967295`. A fixed seed with the same input prompt and generation settings will produce reproducible upsampling for the same runtime.
+    - **`seed`**: Seed for the tag generation process. The node accepts integer seeds from `0` through `4294967295`. Results can still vary across backends, devices, and dependency versions.
     - **`temperature`**: Controls randomness. Higher values (e.g., 1.5-2.0) mean more diverse/surprising tags; lower values (e.g., 0.7-1.0) mean more predictable/conservative tags.
     - **`top_k`**: Considers the k most likely tokens at each step.
     - **`top_p`**: Nucleus sampling; considers the smallest set of tokens whose cumulative probability exceeds p.
@@ -106,10 +110,11 @@ For Desktop or non-CUDA systems, select `cpu` as `model_device`. Select `cuda` o
         - `Original`: Standard Hugging Face Transformers model.
         - `ONNX`: Optimized ONNX model (larger file size, potentially faster).
         - `ONNX (Quantized)`: Quantized ONNX model (smallest file size, often fastest, slight quality trade-off).
+      If the selected model lacks the requested ONNX artifact, the service falls back to an available artifact/backend and records a warning. A failed CUDA initialization similarly falls back to CPU.
     - **`max_new_tokens`**: Maximum number of new tags to be generated by the LLM.
-    - **`negative_prompt_tags` (Optional)**: Provide tags here that you want the upsampler to consider as "negative" context if using CFG. This helps guide what *not* to emphasize or include from the LLM's general knowledge.
-    - **`ban_tags` (Optional)**: Comma-separated list of tags (or patterns with `*`) that should be explicitly excluded from the generated upsampled tags. Example: `official alternate costume, english text, * background`
-    - **`cfg_scale` (Optional)**: Classifier-Free Guidance scale. Only active if `negative_prompt_tags` are provided. Values > 1.0 steer generation towards the main prompt and away from the negative context.
+    - **`negative_prompt_tags` (Optional)**: Negative context for CFG on the Original backend. ONNX backends reject requests that activate CFG.
+    - **`ban_tags` (Optional)**: Comma-separated tags (or supported patterns with `*`) excluded from generated tags on every backend. Example: `official alternate costume, english text, * background`
+    - **`cfg_scale` (Optional)**: Classifier-Free Guidance scale for the Original backend. Values > 1.0 steer generation towards the main prompt and away from negative context.
     - **`debug_logging` (Optional)**: Check this to enable more detailed logging in the console, useful for troubleshooting.
 
 4. The output `upsampled_prompt` can then be connected to a `CLIPTextEncode` node (or similar) for image generation.

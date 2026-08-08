@@ -1,7 +1,8 @@
 import logging
+from functools import lru_cache
 from pathlib import Path
 from dataclasses import dataclass
-from typing import List, Tuple # PEP 585 for List and Tuple
+from typing import Collection, List, Tuple # PEP 585 for List and Tuple
 
 # MODIFIED: Removed WebUI specific imports
 # from modules.extra_networks import parse_prompt
@@ -152,15 +153,64 @@ def normalize_rating_tags(tags: List[str]) -> Tuple[str, str]:
 
 def load_tags_in_file(path: Path) -> List[str]:
     if not path.exists():
-        logger.error(f"Tag file not found: {path}")
-        return []
+        # IMPORTANT: required classification resources must not degrade silently; empty lists misclassify every downstream prompt.
+        raise FileNotFoundError(f"Required tag file not found: {path}")
     try:
         with open(path, "r", encoding="utf-8") as file:
             tags = [tag.strip() for tag in file.readlines() if tag.strip()]
         return tags
-    except Exception as e:
-        logger.error(f"Error reading tag file {path}: {e}")
-        return []
+    except OSError as exc:
+        raise OSError(f"Failed to read required tag file {path}: {exc}") from exc
+
+
+@dataclass(frozen=True)
+class _AnalyzerResources:
+    copyright_tags: frozenset[str]
+    character_tags: frozenset[str]
+    quality_tags: frozenset[str]
+    vocab: frozenset[str]
+
+
+def _resource_fingerprints(tags_dir: Path) -> tuple[tuple[str, int, int], ...]:
+    fingerprints: list[tuple[str, int, int]] = []
+    for file_name in ("copyright.txt", "character.txt", "quality.txt"):
+        path = tags_dir / file_name
+        if not path.is_file():
+            raise FileNotFoundError(f"Required tag file not found: {path}")
+        stat = path.stat()
+        fingerprints.append((file_name, stat.st_mtime_ns, stat.st_size))
+    return tuple(fingerprints)
+
+
+@lru_cache(maxsize=8)
+def _load_analyzer_resources(
+    tags_dir_text: str,
+    fingerprints: tuple[tuple[str, int, int], ...],
+    vocab: tuple[str, ...],
+    escape_input_brackets_enabled: bool,
+) -> _AnalyzerResources:
+    del fingerprints  # The immutable metadata tuple is intentionally part of the cache key.
+    tags_dir = Path(tags_dir_text)
+    copyright_tags = load_tags_in_file(tags_dir / "copyright.txt")
+    character_tags = load_tags_in_file(tags_dir / "character.txt")
+    quality_tags = load_tags_in_file(tags_dir / "quality.txt")
+    normalized_vocab = list(vocab)
+
+    if escape_input_brackets_enabled:
+        copyright_tags.extend(escape_webui_special_symbols(copyright_tags))
+        character_tags.extend(escape_webui_special_symbols(character_tags))
+        normalized_vocab.extend(escape_webui_special_symbols(normalized_vocab))
+
+    return _AnalyzerResources(
+        copyright_tags=frozenset(copyright_tags),
+        character_tags=frozenset(character_tags),
+        quality_tags=frozenset(quality_tags),
+        vocab=frozenset(normalized_vocab),
+    )
+
+
+def clear_analyzer_resource_cache() -> None:
+    _load_analyzer_resources.cache_clear()
 
 
 @dataclass
@@ -198,37 +248,25 @@ class DartAnalyzer:
         self.escape_input_brackets_enabled = escape_input_brackets_enabled
         self.escape_output_brackets_enabled = escape_output_brackets_enabled
 
-        self.tags_dir = tags_dir_path
+        self.tags_dir = tags_dir_path.resolve()
         logger.debug(f"DartAnalyzer using tags_dir: {self.tags_dir}")
 
         self.rating_tags = ALL_INPUT_RATING_TAGS # This list is constant
 
-        self.copyright_tags = load_tags_in_file(self.tags_dir / "copyright.txt")
-        self.character_tags = load_tags_in_file(self.tags_dir / "character.txt")
-        self.quality_tags = load_tags_in_file(self.tags_dir / "quality.txt")
+        resources = _load_analyzer_resources(
+            str(self.tags_dir),
+            _resource_fingerprints(self.tags_dir),
+            tuple(vocab),
+            self.escape_input_brackets_enabled,
+        )
+        self.copyright_tags = resources.copyright_tags
+        self.character_tags = resources.character_tags
+        self.quality_tags = resources.quality_tags
 
         logger.debug(f"Loaded {len(self.copyright_tags)} copyright tags, {len(self.character_tags)} character tags, {len(self.quality_tags)} quality tags.")
 
-        self.vocab = list(vocab) # Take a copy
-        self.special_vocab = list(special_vocab) # Take a copy
-
-        if self.escape_input_brackets_enabled:
-            logger.debug("Applying escaped brackets to loaded copyright, character tags, and vocab for matching.")
-            # This logic assumes escape_webui_special_symbols works on a list of tags and returns a new list with escaped versions
-            # Ensure escape_webui_special_symbols is robust.
-            if self.copyright_tags: # Only escape if list is not empty
-                self.copyright_tags.extend(escape_webui_special_symbols(self.copyright_tags))
-            if self.character_tags:
-                self.character_tags.extend(escape_webui_special_symbols(self.character_tags))
-            # Modifying vocab like this can make it very large. Consider if this is truly necessary
-            # or if matching should handle optional escaping.
-            # For now, replicating original logic:
-            if self.vocab:
-                 self.vocab.extend(escape_webui_special_symbols(self.vocab))
-            # Make them unique after extending
-            self.copyright_tags = sorted(list(set(self.copyright_tags)))
-            self.character_tags = sorted(list(set(self.character_tags)))
-            self.vocab = sorted(list(set(self.vocab)))
+        self.vocab = resources.vocab
+        self.special_vocab = frozenset(special_vocab)
 
 
     def split_tags(self, image_prompt: str) -> List[str]:
@@ -237,13 +275,13 @@ class DartAnalyzer:
             return []
         return [tag.strip() for tag in image_prompt.split(",") if tag.strip()]
 
-    def extract_tags(self, input_tags: List[str], extract_tag_list: List[str]) -> Tuple[List[str], List[str]]:
+    def extract_tags(self, input_tags: List[str], extract_tag_list: Collection[str]) -> Tuple[List[str], List[str]]:
         """Extracts tags that are present in extract_tag_list from input_tags."""
         matched: List[str] = []
         not_matched: List[str] = []
 
         # For efficient lookup if extract_tag_list is large
-        extract_set = set(extract_tag_list)
+        extract_set = extract_tag_list if isinstance(extract_tag_list, (set, frozenset)) else set(extract_tag_list)
 
         for input_tag in input_tags:
             if input_tag in extract_set:
