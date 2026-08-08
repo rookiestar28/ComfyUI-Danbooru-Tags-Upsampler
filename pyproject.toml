@@ -1,7 +1,7 @@
 [project]
 name = "comfyui_danbooru_tags_upsampler"
 description = "Makes the prompts for generating anime images more detailed by upsampling Danbooru tags."
-version = "2.3.0"
+version = "2.3.5"
 license = {file = "LICENSE"}
 requires-python = ">=3.10"
 classifiers = [

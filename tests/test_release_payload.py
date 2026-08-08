@@ -38,7 +38,7 @@ class ReleasePayloadTests(unittest.TestCase):
         pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         version = pyproject["project"]["version"]
 
-        self.assertEqual(version, "2.3.0")
+        self.assertEqual(version, "2.3.5")
         self.assertRegex(version, r"^\d+\.\d+\.\d+$")
         self.assertEqual(pyproject["tool"]["comfy"]["includes"], [])
 

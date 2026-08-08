@@ -6,7 +6,7 @@ This project is a ComfyUI port and adaptation of [sd-danbooru-tags-upsampler](ht
 
 ## Table of Contents
 
-- [What's New in 2.3.0](#whats-new-in-230)
+- [What's New in 2.3.5](#whats-new-in-235)
 - [Features](#features)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
@@ -20,7 +20,7 @@ This project is a ComfyUI port and adaptation of [sd-danbooru-tags-upsampler](ht
 - [Acknowledgements](#acknowledgements)
 - [License](#license)
 
-## What's New in 2.3.0
+## What's New in 2.3.5
 
 - **Truthful backend behavior:** Original, ONNX, and quantized ONNX capabilities are explicit. ONNX applies ban tags and rejects active CFG instead of silently ignoring it.
 - **Strict request validation:** Numeric bounds and non-finite floats are rejected before model, tokenizer, or analyzer construction. Service callers receive typed error codes.
