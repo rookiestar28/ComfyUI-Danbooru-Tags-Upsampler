@@ -6,7 +6,7 @@ This project is a ComfyUI port and adaptation of [sd-danbooru-tags-upsampler](ht
 
 ## Table of Contents
 
-- [What's New in 2.3.5](#whats-new-in-235)
+- [What's New in 2.4.0](#whats-new-in-240)
 - [Features](#features)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
@@ -20,7 +20,15 @@ This project is a ComfyUI port and adaptation of [sd-danbooru-tags-upsampler](ht
 - [Acknowledgements](#acknowledgements)
 - [License](#license)
 
-## What's New in 2.3.5
+## What's New in 2.4.0
+
+- **Precise ban patterns:** `*` patterns preserve every literal fragment. Literal bans match complete tokens, so `cat` does not also block `catgirl`; use `cat*` when a prefix ban is intended. Original and both ONNX backends receive the same intended token IDs.
+- **Consistent rating normalization:** Mixed parent/child inputs produce canonical DART rating pairs, and repeated `nsfw` or `sfw` aliases no longer create false parent conflicts. Existing child-priority and CFG rating rules are preserved.
+- **Typed numeric failures:** Integer infinity and oversized integer-to-float conversions return `invalid_request` before runtime construction, with the underlying error retained for service callers.
+- **Older and newer host compatibility:** V1 loading, both workflow IDs and widget order are retained without pinning core or frontend versions. The dated compatibility table below distinguishes actual workflow tests, historical inference and Desktop source review.
+- **Python 3.10 test coverage:** Metadata and release checks now use a test-only TOML parser fallback instead of skipping on Python 3.10. Both Python 3.10 and 3.13 execute all 63 unit tests without skips.
+
+### Earlier improvements in 2.3.5
 
 - **Truthful backend behavior:** Original, ONNX, and quantized ONNX capabilities are explicit. ONNX applies ban tags and rejects active CFG instead of silently ignoring it.
 - **Strict request validation:** Numeric bounds and non-finite floats are rejected before model, tokenizer, or analyzer construction. Service callers receive typed error codes.
@@ -81,6 +89,8 @@ The node-specific dependencies are:
 
 `torch`, `torchvision`, and `torchaudio` are intentionally not installed or pinned by this node. They remain owned by the ComfyUI host so that its CPU/CUDA runtime is not replaced accidentally. The removed legacy `install.py` must not be restored or run.
 
+For ComfyUI Desktop, use the interpreter selected by the running application's installation method. In Desktop 1.1.6 Builder installations, the launcher selects `venv/base/python.exe` on Windows, with an older `venv/python.exe` fallback, or `venv/bin/python3` on POSIX. Other installation methods can select a different environment. Confirm the active interpreter before installing requirements; the development `.venv` described below is separate from Desktop's environment. See the [official Desktop Builder launcher](https://github.com/Comfy-Org/Comfy-Desktop/blob/9c43562d9e1e3a23af13f2e18653935e67bd9eda/src/main/comfybuilder/launch.ts).
+
 The required `tags/copyright.txt`, `tags/character.txt`, and `tags/quality.txt` resources are included in the repository. Restart ComfyUI after installation and confirm there are no custom-node import errors.
 
 ## Quick Start
@@ -110,7 +120,7 @@ The canonical workflow node ID is `DanbooruTagsUpsampler`. Existing workflows se
 | `model_backend` | `ONNX (Quantized)` | Requests `Original`, `ONNX`, or `ONNX (Quantized)`. Artifact availability may resolve the request to another backend as documented below. |
 | `max_new_tokens` | `128`; `8`–`512` | Maximum number of generated tokens. |
 | `negative_prompt_tags` | empty | Negative context used for CFG. Active CFG requires non-empty negative tags, `cfg_scale > 1.0`, and the Original backend. |
-| `ban_tags` | empty | Comma-separated tags or supported wildcard patterns to block on every backend. |
+| `ban_tags` | empty | Comma-separated tags or `*` patterns to block on every backend. Literal entries match complete tokens; use `cat*` for a prefix or `*eyes` for a suffix. Other regex characters remain literal. |
 | `cfg_scale` | `1.5`; `1.0`–`10.0` | CFG strength. ONNX rejects active CFG before heavy runtime construction. |
 | `debug_logging` | `false` | Enables additional detailed runtime logging. Current standard runtime logs may already include a truncated generated-output preview; do not process sensitive prompts without controlling log access. |
 
@@ -144,15 +154,25 @@ Package metadata declares:
 - ComfyUI `>=0.22.3`
 - V1 custom-node loading through `NODE_CLASS_MAPPINGS`, as defined by the [ComfyUI node lifecycle](https://docs.comfy.org/custom-nodes/backend/lifecycle)
 
-The declared ComfyUI floor is a packaging compatibility boundary, not a claim that every historical host tuple received full live inference testing.
+The node does not pin or install ComfyUI core or frontend versions. It preserves the V1 loader, both workflow IDs, and the existing input order so older and newer hosts can use the same node implementation. Compatibility depends on those host contracts and a compatible Python dependency environment; the dated versions below are test samples, not version locks. The declared ComfyUI floor is a packaging compatibility boundary, not a claim that every historical host tuple received full live inference testing.
 
-The following source and runtime baseline was verified on 2026-08-09:
+Node and workflow compatibility was verified on 2026-10-04:
+
+| Core | Active frontend | Verification scope |
+| --- | --- | --- |
+| ComfyUI 0.22.3 | packaged frontend 1.43.18 | Both IDs discovered and added; 15 input schemas/defaults/tooltips; STRING output; seed/control and parameter edits; workflow save/reload |
+| ComfyUI 0.38.0 source snapshot `8cfe5e1` | packaged frontend 1.53.6 | Same metadata and browser interaction checks; workflow saved here also loads on the older host |
+| Same ComfyUI 0.38.0 snapshot | official frontend release assets v1.56.2 | Same checks; the older host's saved workflow loads without widget order or value changes |
+
+The 1.56.2 row used the official [frontend release `dist.zip`](https://github.com/Comfy-Org/ComfyUI_frontend/releases/tag/v1.56.2) through ComfyUI's `--front-end-root` option. Its build manifest identifies commit `1cfc7cdf`, and its UI displays a preview/nightly badge. No corresponding Python frontend package was available on PyPI on the test date; the installed package remained 1.53.6 while the active assets were verified separately. These rows cover node/workflow compatibility and do not add live inference claims. Desktop 1.1.6 was source-reviewed for installation and interpreter selection; an installed Desktop runtime was not tested.
+
+The following historical source and runtime baseline was verified on 2026-08-09:
 
 | Surface | Reviewed tuple | Verification scope |
 | --- | --- | --- |
-| Current stable host | ComfyUI 0.31.0 with packaged frontend 1.48.7 | Live node discovery for both IDs; frozen input order/defaults; 15/15 tooltips; output/search metadata; pinned v1 Original and quantized-ONNX CPU inference |
+| Historical host sample | ComfyUI 0.31.0 with packaged frontend 1.48.7 | Live node discovery for both IDs; frozen input order/defaults; 15/15 tooltips; output/search metadata; pinned v1 Original and quantized-ONNX CPU inference |
 | Standalone frontend schema | standalone frontend 1.50.3 | Backend metadata remains JSON serializable; no frontend bundle or V3-only entrypoint is shipped |
-| Current Desktop stable channel | Comfy Desktop 1.0.37 → ComfyUI 0.31.0 → packaged frontend 1.48.7 | Source-reviewed, channel-resolved Desktop behavior plus the current-stable host validation above |
+| Historical Desktop channel sample | Comfy Desktop 1.0.37 → ComfyUI 0.31.0 → packaged frontend 1.48.7 | Source-reviewed, channel-resolved Desktop behavior plus the historical host validation above |
 
 Desktop's stable channel is channel-resolved rather than a permanently frozen bundle, so a later Desktop installation may select a newer stable core. Treat the dated tuple above as validation evidence, not a permanent compatibility promise.
 
@@ -242,11 +262,14 @@ The port retains escape/unescape handling inherited from the original extension.
 Use Python 3.10 or newer and install development tooling into a project-local environment. The deterministic repository gate is documented in `tests/TEST_SOP.md` and enforced in CI on Python 3.10 and 3.13.
 
 ```powershell
-pre-commit run detect-secrets --all-files
-pre-commit run --all-files --show-diff-on-failure
+.venv\Scripts\python.exe -m pip install pre-commit==4.6.0 "tomli==2.4.1; python_version < '3.11'"
+.venv\Scripts\python.exe -m pre_commit run detect-secrets --all-files
+.venv\Scripts\python.exe -m pre_commit run --all-files --show-diff-on-failure
 .venv\Scripts\python.exe -m compileall danbooru_upsampler __init__.py
 .venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py" -v
 ```
+
+`tomli` is test tooling for Python 3.10 only; it is not a node runtime dependency. Missing TOML test tooling fails with installation instructions instead of silently skipping metadata or release checks. Python 3.11 and newer use the standard-library `tomllib` parser.
 
 This is a Python-only custom node with no `package.json`, browser bundle, or Playwright harness. Compile/import checks and the unit suite are the documented frontend-E2E replacement lane. Automated tests use fakes for model, ONNX, CUDA, and concurrency boundaries and must not download live models.
 
