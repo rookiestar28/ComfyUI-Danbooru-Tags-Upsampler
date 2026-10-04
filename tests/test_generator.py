@@ -390,3 +390,31 @@ class DartGeneratorRuntimeLockTests(unittest.TestCase):
         DartGenerator.dart_model = FakeOrtModel()  # type: ignore[assignment]
 
         self.assertEqual(generator.get_actual_device(), "cuda")
+
+
+class DartGeneratorBanPatternTests(unittest.TestCase):
+    def test_vocabulary_bans_match_complete_tags_and_forward_on_every_backend(self) -> None:
+        vocab = {"blue_eyes": 8, "green_eyes": 3, "blue_hair": 1, "red_hair": 2,
+                 "cat": 5, "catgirl": 4, "cat_alias": 5}
+        cases = (("blue*eyes", [[8]]), ("*eyes", [[3], [8]]),
+                 ("cat", [[5]]), ("cat*", [[4], [5]]),
+                 ("cat,cat,*eyes", [[3], [5], [8]]), (" , , ", None))
+        for backend in MODEL_BACKEND_TYPE.values():
+            for ban_tags, expected in cases:
+                with self.subTest(backend=backend, ban_tags=ban_tags):
+                    generator = DartGenerator("synthetic", "synthetic", backend, model_device="cpu")
+                    tokenizer = mock.Mock(vocab=vocab, eos_token_id=1)
+                    tokenizer.encode_plus.return_value = SimpleNamespace(input_ids=torch.tensor([[1, 2]]))
+                    tokenizer.decode.return_value = "smile"
+                    model = mock.Mock(device=torch.device("cpu"))
+                    model.generate.return_value = torch.tensor([[1, 2, 3]])
+                    with (
+                        mock.patch.object(generator, "load_tokenizer_if_needed"),
+                        mock.patch.object(generator, "load_model_if_needed"),
+                        mock.patch.object(DartGenerator, "dart_tokenizer", tokenizer),
+                        mock.patch.object(DartGenerator, "dart_model", model),
+                    ):
+                        ids = generator.get_bad_words_ids(ban_tags)
+                        self.assertEqual(ids, expected)
+                        self.assertEqual(generator.generate("<synthetic>", bad_words_ids=ids), "smile")
+                    self.assertEqual(model.generate.call_args.kwargs["bad_words_ids"], expected)

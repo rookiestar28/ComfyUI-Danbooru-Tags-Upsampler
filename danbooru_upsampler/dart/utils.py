@@ -87,18 +87,9 @@ def _get_tag_pattern(tag: str) -> re.Pattern:
         logger.warning(f"_get_tag_pattern received non-string: {tag}. Returning a benign pattern.")
         return re.compile(re.escape(str(tag))) # Try to convert and escape
 
-    if "*" in tag:
-        # Replace wildcard '*' with '.*' and escape other regex characters
-        pattern_str = "".join(
-            TAG_ESCAPE_SYMBOL_PATTERN.sub(lambda m: "\\" + m.group(0), part)
-            if i % 2 == 0 else ".*"
-            for i, part in enumerate(tag.split("*"))
-        )
-        # Ensure pattern is valid if it starts/ends with * or has consecutive **
-        # A simple split-join handles this fairly well. e.g. "*a*b*" -> ".*a.*b.*"
-    else:
-        # Escape all regex special characters if no wildcard
-        pattern_str = re.escape(tag)
+    # IMPORTANT: preserve every literal fragment; alternating split indices drops
+    # suffixes and turns patterns such as '*eyes' into a ban of the entire vocabulary.
+    pattern_str = ".*".join(re.escape(part) for part in tag.split("*"))
 
     try:
         return re.compile(pattern_str)

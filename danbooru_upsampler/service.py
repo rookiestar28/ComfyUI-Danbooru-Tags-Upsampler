@@ -183,18 +183,21 @@ def _validate_tag_length(tag_length: str) -> str:
 
 
 def _coerce_int(value: object, *, field_name: str) -> int:
+    # IMPORTANT: int(inf) fails during conversion, before range validation;
+    # preserve the typed request boundary instead of leaking OverflowError.
     try:
         return int(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise DanbooruUpsamplerInvalidRequestError(
             f"{field_name} must be an integer-compatible value."
         ) from exc
 
 
 def _coerce_float(value: object, *, field_name: str) -> float:
+    # IMPORTANT: huge integers overflow before the finite check can run.
     try:
         return float(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise DanbooruUpsamplerInvalidRequestError(
             f"{field_name} must be a float-compatible value."
         ) from exc

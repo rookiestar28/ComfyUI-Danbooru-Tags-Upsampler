@@ -25,6 +25,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("pre-commit run --all-files --show-diff-on-failure", ci)
         self.assertIn("python -m compileall danbooru_upsampler __init__.py", ci)
         self.assertIn("python -m unittest discover", ci)
+        self.assertIn("tomli==2.4.1; python_version < '3.11'", ci)
         self.assertIn("E2E replacement lane", ci)
         self.assertNotIn("REGISTRY_ACCESS_TOKEN", ci)
         self.assertNotIn("comfy node publish", ci)

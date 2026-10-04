@@ -38,6 +38,62 @@ def _analysis_result(*, general: str = "1girl, solo") -> ImagePromptAnalyzingRes
 
 
 class DanbooruUpsamplerServiceTests(unittest.TestCase):
+    def test_numeric_conversion_failures_are_typed_before_runtime_construction(self) -> None:
+        base = DanbooruUpsamplerRequest(prompt="synthetic", model_device="cpu")
+        cases = [(field, value, OverflowError) for field in ("seed", "top_k", "num_beams", "max_new_tokens") for value in (math.inf, -math.inf)]
+        cases += [(field, 10**1000, OverflowError) for field in ("temperature", "top_p", "cfg_scale")]
+        cases += [("seed", math.nan, ValueError), ("top_k", "invalid", ValueError), ("temperature", object(), TypeError)]
+        for field, value, cause in cases:
+            with (
+                self.subTest(field=field, cause=cause.__name__),
+                mock.patch.object(service_module, "DartGenerator") as generator,
+                mock.patch.object(service_module, "DartAnalyzer") as analyzer,
+            ):
+                with self.assertRaises(DanbooruUpsamplerInvalidRequestError) as caught:
+                    upsample_prompt(replace(base, **{field: value}))
+                self.assertEqual(caught.exception.code, "invalid_request")
+                self.assertIn(field, str(caught.exception))
+                self.assertIsInstance(caught.exception.__cause__, cause)
+                generator.assert_not_called()
+                analyzer.assert_not_called()
+
+    def test_toolbar_overflow_is_typed_and_finite_coercion_is_preserved(self) -> None:
+        for value in (math.inf, -math.inf):
+            with self.subTest(value=value):
+                with self.assertRaises(DanbooruUpsamplerInvalidRequestError) as caught:
+                    build_toolbar_request("synthetic", seed=value)
+                self.assertEqual(caught.exception.code, "invalid_request")
+                self.assertIsInstance(caught.exception.__cause__, OverflowError)
+        for value, expected in (("42", 42), (1.9, 1), (True, 1), (0, 0), (2**32 - 1, 2**32 - 1)):
+            with self.subTest(value=value):
+                self.assertEqual(build_toolbar_request("synthetic", seed=value).seed, expected)
+                self.assertEqual(service_module._validate_int_range(value, field_name="seed", minimum=0, maximum=2**32 - 1), expected)
+        self.assertEqual(service_module._validate_float_range("1.5", field_name="temperature", minimum=0.01, maximum=5.0), 1.5)
+
+    def test_real_analyzer_and_composer_emit_canonical_positive_and_cfg_ratings(self) -> None:
+        from danbooru_upsampler.dart.generator import DartGenerator
+
+        generator = DartGenerator("synthetic", "synthetic", MODEL_BACKEND_TYPE["ORIGINAL"], model_device="cpu")
+        request = DanbooruUpsamplerRequest(
+            prompt="sfw, rating:explicit, 1girl", negative_prompt_tags="nsfw, rating:general, solo",
+            model_backend=MODEL_BACKEND_TYPE["ORIGINAL"], model_device="cpu",
+        )
+        with (
+            mock.patch.object(service_module, "DartGenerator", return_value=generator),
+            mock.patch.object(generator, "load_model_if_needed"),
+            mock.patch.object(generator, "load_tokenizer_if_needed"),
+            mock.patch.object(generator, "get_actual_device", return_value="cpu"),
+            mock.patch.object(generator, "get_vocab_list", return_value=["1girl", "solo"]),
+            mock.patch.object(generator, "get_special_vocab_list", return_value=[]),
+            mock.patch.object(generator, "generate", return_value="smile") as generate,
+            mock.patch.object(service_module, "set_seed"),
+        ):
+            result = upsample_prompt(request)
+        self.assertIn("<rating>rating:sfw, rating:general</rating>", generate.call_args.kwargs["prompt"])
+        # CFG intentionally inherits the positive rating while using negative general tags.
+        self.assertIn("<rating>rating:sfw, rating:general</rating>", generate.call_args.kwargs["negative_prompt"])
+        self.assertEqual(result.final_prompt, request.prompt + ", smile")
+
     def test_backend_capabilities_report_cfg_and_ban_tag_support(self) -> None:
         resolver = getattr(service_module, "resolve_backend_capabilities", lambda _backend: None)
 

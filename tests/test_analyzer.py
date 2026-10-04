@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import itertools
 import threading
 import unittest
 from pathlib import Path
@@ -8,6 +9,49 @@ from unittest import mock
 
 import danbooru_upsampler.dart.analyzer as analyzer_module
 from danbooru_upsampler.dart.analyzer import DartAnalyzer
+
+
+class RatingNormalizationTests(unittest.TestCase):
+    def test_singletons_defaults_and_repeated_parents(self) -> None:
+        cases = (
+            ([], ("rating:sfw", "rating:general")),
+            (["unknown"], ("rating:sfw", "rating:general")),
+            (["sfw"], ("rating:sfw", "rating:general")),
+            (["nsfw"], ("rating:nsfw", "rating:explicit")),
+            (["rating:general"], ("rating:sfw", "rating:general")),
+            (["rating:sensitive"], ("rating:sfw", "rating:sensitive")),
+            (["rating:questionable"], ("rating:nsfw", "rating:questionable")),
+            (["rating:explicit"], ("rating:nsfw", "rating:explicit")),
+            (["nsfw", "nsfw"], ("rating:nsfw", "rating:explicit")),
+            (["sfw", "sfw"], ("rating:sfw", "rating:general")),
+            (["sfw", "nsfw"], ("rating:sfw", "rating:general")),
+        )
+        for tags, expected in cases:
+            with self.subTest(tags=tags):
+                self.assertEqual(analyzer_module.normalize_rating_tags(tags), expected)
+
+    def test_every_parent_child_pair_is_canonical_and_consistent(self) -> None:
+        children = ("rating:general", "rating:sensitive", "rating:questionable", "rating:explicit")
+        for parent in ("sfw", "nsfw"):
+            for index, child in enumerate(children):
+                expected_child = child if (parent == "sfw") == (index < 2) else (
+                    "rating:general" if parent == "sfw" else "rating:explicit")
+                expected = ("rating:" + parent, expected_child)
+                for tags in ([parent, child], [child, parent], [parent, child, parent, child]):
+                    with self.subTest(tags=tags):
+                        self.assertEqual(analyzer_module.normalize_rating_tags(tags), expected)
+
+    def test_strongest_child_and_mixed_parents_are_order_independent(self) -> None:
+        cases = (
+            (["rating:general", "rating:questionable", "rating:sensitive"], ("rating:nsfw", "rating:questionable")),
+            (["sfw", "nsfw", "rating:sensitive"], ("rating:nsfw", "rating:explicit")),
+            (["sfw", "rating:sensitive", "rating:explicit"], ("rating:sfw", "rating:general")),
+            (["nsfw", "rating:general", "rating:questionable"], ("rating:nsfw", "rating:questionable")),
+        )
+        for tags, expected in cases:
+            for permutation in itertools.permutations(tags):
+                with self.subTest(tags=permutation):
+                    self.assertEqual(analyzer_module.normalize_rating_tags(list(permutation)), expected)
 
 
 def _write_tag_resources(tags_dir: Path) -> None:

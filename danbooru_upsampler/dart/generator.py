@@ -310,7 +310,9 @@ class DartGenerator:
 
         for pattern in ban_tag_patterns:
             for tag, token_id in vocab.items():
-                if isinstance(tag, str) and isinstance(token_id, int) and pattern.match(tag):
+                # IMPORTANT: match the complete token; prefix matching makes a literal
+                # ban of 'cat' also suppress 'catgirl'. Prefix bans require an explicit '*'.
+                if isinstance(tag, str) and isinstance(token_id, int) and pattern.fullmatch(tag):
                     ban_words_ids.append(token_id)
 
         if not ban_words_ids:

@@ -5,10 +5,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback for local smoke only.
-    tomllib = None  # type: ignore[assignment]
+from toml_test_support import load_toml
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -32,13 +29,12 @@ EXPECTED_PAYLOAD_ROOTS = {
 }
 
 
-@unittest.skipIf(tomllib is None, "tomllib is unavailable on this Python runtime")
 class ReleasePayloadTests(unittest.TestCase):
     def test_release_candidate_uses_new_three_part_semver(self) -> None:
-        pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        pyproject = load_toml(PROJECT_ROOT / "pyproject.toml")
         version = pyproject["project"]["version"]
 
-        self.assertEqual(version, "2.3.5")
+        self.assertEqual(version, "2.4.0")
         self.assertRegex(version, r"^\d+\.\d+\.\d+$")
         self.assertEqual(pyproject["tool"]["comfy"]["includes"], [])
 
@@ -90,6 +86,14 @@ class ReleasePayloadTests(unittest.TestCase):
         self.assertIn("channel-resolved", readme)
         self.assertIn("DanbooruTagsUpsamplerNodeRay", readme)
         self.assertIn("No live model download", readme)
+        self.assertIn("2026-10-04", readme)
+        self.assertIn("ComfyUI 0.22.3", readme)
+        self.assertIn("ComfyUI 0.38.0 source snapshot", readme)
+        self.assertIn("packaged frontend 1.53.6", readme)
+        self.assertIn("official frontend release assets v1.56.2", readme)
+        self.assertIn("test samples, not version locks", readme)
+        self.assertIn("do not add live inference claims", readme)
+        self.assertIn("an installed Desktop runtime was not tested", readme)
 
 
 if __name__ == "__main__":

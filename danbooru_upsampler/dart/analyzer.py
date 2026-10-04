@@ -88,7 +88,9 @@ def normalize_rating_tags(tags: List[str]) -> Tuple[str, str]:
     if not tags:
         return DART_RATING_DEFAULT_PAIR
 
-    valid_tags = [tag for tag in tags if tag in ALL_INPUT_RATING_TAGS]
+    # IMPORTANT: repeated aliases are one rating; duplicate 'nsfw' must not
+    # enter the conflicting-parent fallback and silently become SFW.
+    valid_tags = list(dict.fromkeys(tag for tag in tags if tag in ALL_INPUT_RATING_TAGS))
     if not valid_tags:
         logger.debug("No valid rating tags found in input, using default.")
         return DART_RATING_DEFAULT_PAIR
@@ -120,20 +122,22 @@ def normalize_rating_tags(tags: List[str]) -> Tuple[str, str]:
 
         # Check for mismatch, e.g., "nsfw" parent with "rating:general" child
         expected_pair_for_parent = get_rating_tag_pair(parent_tag)
-        if strongest_child_tag != expected_pair_for_parent[1] and parent_tag == DART_RATING_NSFW and strongest_child_tag in [INPUT_RATING_GENERAL, INPUT_RATING_SENSITIVE]:
+        # IMPORTANT: compare input aliases here, then emit the canonical DART
+        # parent. Comparing aliases to output tags bypasses mismatch repair.
+        if parent_tag == INPUT_RATING_NSFW and strongest_child_tag in [INPUT_RATING_GENERAL, INPUT_RATING_SENSITIVE]:
              logger.warning(
                 f'Specified child rating tag "{strongest_child_tag}" mismatches with dominant parent tag "{parent_tag}". '
                 f'Using "{expected_pair_for_parent[1]}" (derived from parent) instead.'
             )
              return expected_pair_for_parent
-        elif strongest_child_tag != expected_pair_for_parent[1] and parent_tag == DART_RATING_SFW and strongest_child_tag in [INPUT_RATING_QUESTIONABLE, INPUT_RATING_EXPLICIT]:
+        elif parent_tag == INPUT_RATING_SFW and strongest_child_tag in [INPUT_RATING_QUESTIONABLE, INPUT_RATING_EXPLICIT]:
              logger.warning(
                 f'Specified child rating tag "{strongest_child_tag}" mismatches with dominant parent tag "{parent_tag}". '
                 f'Using "{expected_pair_for_parent[1]}" (derived from parent) instead.'
             )
              return expected_pair_for_parent
 
-        return parent_tag, strongest_child_tag
+        return expected_pair_for_parent[0], strongest_child_tag
 
     if child_tags_present: # Only child tags, no parent tags
         strongest_tag = get_strongest_rating_tag(child_tags_present)

@@ -9,10 +9,28 @@ from danbooru_upsampler.node import (
     NODE_DISPLAY_NAME_MAPPINGS,
     DanbooruTagsUpsamplerNode,
 )
-from danbooru_upsampler.service import DanbooruUpsamplerGenerationError, DanbooruUpsamplerResult
+from danbooru_upsampler.service import DanbooruUpsamplerGenerationError, DanbooruUpsamplerInvalidRequestError, DanbooruUpsamplerResult
 
 
 class DanbooruUpsamplerNodeTests(unittest.TestCase):
+    def test_numeric_overflow_keeps_node_and_service_error_chain(self) -> None:
+        inputs = DanbooruTagsUpsamplerNode.INPUT_TYPES()
+        defaults = {name: definition[1]["default"] for group in ("required", "optional") for name, definition in inputs[group].items()}
+        for field, value in (("seed", float("inf")), ("temperature", 10**1000)):
+            with (
+                self.subTest(field=field),
+                mock.patch("danbooru_upsampler.service.DartGenerator") as generator,
+                mock.patch("danbooru_upsampler.service.DartAnalyzer") as analyzer,
+            ):
+                with self.assertRaises(RuntimeError) as caught:
+                    DanbooruTagsUpsamplerNode().upsample(**{**defaults, field: value})
+                service_error = caught.exception.__cause__
+                self.assertIsInstance(service_error, DanbooruUpsamplerInvalidRequestError)
+                self.assertEqual(service_error.code, "invalid_request")
+                self.assertIsInstance(service_error.__cause__, OverflowError)
+                generator.assert_not_called()
+                analyzer.assert_not_called()
+
     def test_object_info_metadata_has_tooltips_and_preserves_widget_contract(self) -> None:
         input_types = DanbooruTagsUpsamplerNode.INPUT_TYPES()
         expected_required = (
