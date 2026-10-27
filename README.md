@@ -289,3 +289,8 @@ All credit for the original concept, model training, and core generation logic g
 ## License
 
 Licensed under the Apache License 2.0. See [`LICENSE`](LICENSE) for the full text.
+
+- Copyright (c) 2024 p1atdev and contributors: the original
+  [sd-danbooru-tags-upsampler](https://github.com/p1atdev/sd-danbooru-tags-upsampler).
+- Copyright (c) 2024-2026 rookiestar (GitHub: rookiestar28): the ComfyUI port and its changes to the
+  original files.
